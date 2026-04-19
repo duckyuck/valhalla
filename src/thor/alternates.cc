@@ -192,7 +192,19 @@ bool validate_alternate_by_sharing(std::vector<std::unordered_set<GraphId>>& sha
 }
 
 bool validate_alternate_by_local_optimality(const std::vector<PathInfo>&) {
-  // [TODO] NOT IMPLEMENTED
+  // Deliberately returns true — local-optimality gating is not implemented.
+  //
+  // Joyride's product wants divergent alternates for an explore-mode UX
+  // (motorcyclists seeing geographically different rides, not k-best
+  // variations of the optimal path). A strict local-optimality check
+  // (Kobitzsch 2015) rejects alternates where any sub-segment isn't itself a
+  // shortest path — precisely the "take the scenic parallel road" candidates
+  // we want to keep. The sharing (kAtMostShared) and stretch
+  // (kAtMostLongerDetour) validators already bound alternate quality for our
+  // purposes.
+  //
+  // Revisit only if production alternates show systematically bad candidates
+  // that a real implementation would reject without harming divergence.
   return true;
 }
 } // namespace thor
