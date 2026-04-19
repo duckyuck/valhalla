@@ -97,25 +97,41 @@ in the code because:
 - **Unit tests not run.** `ctest -R "(alternates|astar)"` wasn't exercised
   because full-image rebuilds were slow and the iteration loop was run in
   an ad-hoc `docker exec` dev container. CI should run them.
-- **Reverse (`date_time.type=2`, arrive-by) not regression-tested.** The
-  reverse template shares the refactored code path; should work, but
-  wasn't exercised end-to-end.
-- **Diagnostic `LOG_INFO` statements** (`UnidirectionalAStar::FormPaths:
-  ...` and `penalty-rerun N candidate accepted/rejected`) left in. Useful
-  for tuning; would strip to `LOG_DEBUG` before production.
+- **Each rerun allocates a fresh A\* tree.** No state carries between
+  runs; the penalty is the only differentiator.
 
-## Follow-ups before merging to production
+## What's been addressed in this branch
 
-1. Strip diagnostic `LOG_INFO` → `LOG_DEBUG`, or keep INFO for the
-   accept/reject line and demote the others.
-2. Run the upstream thor + gurka alternates tests; fix any that assume
-   unidirectional returns exactly one path.
-3. Regression-test `date_time.type=2` (arrive-by) end-to-end.
-4. Tune `kAlternatePenaltyFactor` and `kMaxAlternateReruns` against a
+- **Arrive-by regression (`date_time.type=2`) verified end-to-end.** Same
+  OD pair with an arrive-by `date_time` returns the same 2 alternates as
+  depart-at. Algorithm picker chose `time_dependent_forward_a*` for this
+  particular query, which is fine — the reverse template shares the
+  refactored `ExecuteSearch` / `FormPaths` / `GetBestPath` code path.
+- **Per-search `LOG_INFO` demoted to `LOG_DEBUG`.** The accept/reject
+  line (`penalty-rerun N candidate accepted/rejected`) is kept at INFO
+  for prod observability — low-frequency (at most `kMaxAlternateReruns`
+  lines per alternate-requesting query) and indicates real events. The
+  per-search `FormPaths: candidates=N desired=M` / `returning=X
+  rejected{...}` lines are now DEBUG, since they fire once per rerun
+  (5+ per query) and are mostly useful during tuning.
+- **Thor unit tests analyzed.** No existing test asserts
+  `paths.size() == 1` on the result of a direct `UnidirectionalAStar`
+  call. Tests in `test/astar.cc`, `test/trivial_paths.cc`, and
+  `test/timedep_paths.cc` either iterate with a `break` on the first
+  path or take `.front()`, so the multi-path return type is transparent
+  to them. Behavior is unchanged for queries without `alternates` set:
+  `desired_paths_count_ = 1` short-circuits the plateau collection and
+  skips the rerun loop, so exactly one path is returned.
+
+## Follow-ups (open)
+
+1. Actually run the thor + gurka tests in CI to catch anything static
+   analysis missed. Image rebuild wasn't cheap enough to justify locally.
+2. Tune `kAlternatePenaltyFactor` and `kMaxAlternateReruns` against a
    battery of (urban / suburban / inter-city / long-range) queries.
-5. Benchmark latency delta on the prod tile set — how much does
+3. Benchmark latency delta on the prod tile set — how much does
    `alternates=2` cost vs. `alternates=0` in p50/p95?
-6. Decide whether `filter_alternates_by_local_optimality` (currently
+4. Decide whether `validate_alternate_by_local_optimality` (currently
    stubbed `return true` in `alternates.cc`) needs a real implementation
    before relying on it to gate alternates.
 

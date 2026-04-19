@@ -496,9 +496,9 @@ UnidirectionalAStar<expansion_direction, FORWARD>::FormPaths(
     const valhalla::Location& origin,
     const valhalla::Location& destination) {
   std::vector<std::vector<PathInfo>> paths;
-  LOG_INFO("UnidirectionalAStar::FormPaths: candidates=" +
-           std::to_string(candidate_dest_labels_.size()) +
-           " desired=" + std::to_string(desired_paths_count_));
+  LOG_DEBUG("UnidirectionalAStar::FormPaths: candidates=" +
+            std::to_string(candidate_dest_labels_.size()) +
+            " desired=" + std::to_string(desired_paths_count_));
   if (candidate_dest_labels_.empty()) {
     return paths;
   }
@@ -537,10 +537,10 @@ UnidirectionalAStar<expansion_direction, FORWARD>::FormPaths(
     paths.emplace_back(std::move(candidate));
   }
 
-  LOG_INFO("UnidirectionalAStar::FormPaths: returning=" + std::to_string(paths.size()) +
-           " rejected{share=" + std::to_string(rejected_share) +
-           ",stretch=" + std::to_string(rejected_stretch) +
-           ",empty=" + std::to_string(rejected_empty) + "}");
+  LOG_DEBUG("UnidirectionalAStar::FormPaths: returning=" + std::to_string(paths.size()) +
+            " rejected{share=" + std::to_string(rejected_share) +
+            ",stretch=" + std::to_string(rejected_stretch) +
+            ",empty=" + std::to_string(rejected_empty) + "}");
   return paths;
 }
 
