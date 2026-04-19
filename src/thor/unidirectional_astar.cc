@@ -7,6 +7,7 @@
 #include <boost/property_tree/ptree.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 
 using namespace valhalla::baldr;
 using namespace valhalla::sif;
@@ -15,15 +16,29 @@ namespace thor {
 // Number of iterations to allow with no convergence to the destination
 constexpr uint32_t kMaxIterationsWithoutConvergence = 1800000;
 
+// Alternates tuning knobs. Read once from environment at program startup, so
+// tuning sweeps can adjust them without recompiling. Defaults match the
+// spike's original values. See docs/decisions/bidirectional-weather-routing.md.
+namespace {
+double env_double(const char* name, double def) {
+  const char* v = std::getenv(name);
+  return v ? std::atof(v) : def;
+}
+uint32_t env_u32(const char* name, uint32_t def) {
+  const char* v = std::getenv(name);
+  return v ? static_cast<uint32_t>(std::strtoul(v, nullptr, 10)) : def;
+}
+} // namespace
+
 // Extra label-relaxation budget after the optimal destination is found, used
 // to collect candidate alternate paths. Tuned small to keep latency bounded.
-constexpr uint32_t kMaxAlternateIterations = 200000;
+const uint32_t kMaxAlternateIterations = env_u32("VALHALLA_MAX_ALT_ITERATIONS", 200000);
 
 // Cost multiplier applied to edges in penalized_edges_ during penalty reruns.
-constexpr double kAlternatePenaltyFactor = 3.0;
+const double kAlternatePenaltyFactor = env_double("VALHALLA_ALT_PENALTY_FACTOR", 3.0);
 
 // Upper bound on penalty reruns per GetBestPath call.
-constexpr uint32_t kMaxAlternateReruns = 4;
+const uint32_t kMaxAlternateReruns = env_u32("VALHALLA_MAX_ALT_RERUNS", 4);
 
 template <const ExpansionType expansion_direction, const bool FORWARD>
 UnidirectionalAStar<expansion_direction, FORWARD>::UnidirectionalAStar(
