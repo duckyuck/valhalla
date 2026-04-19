@@ -24,9 +24,9 @@ namespace sif {
 namespace {
 
 // Other options
-constexpr float kDefaultUseHighways = 0.5f; // Factor between 0 and 1
-constexpr float kDefaultUseTolls = 0.5f;    // Factor between 0 and 1
-constexpr float kDefaultUseTrails = 0.0f;   // Factor between 0 and 1
+constexpr float kDefaultUseHighways = 0.5f;    // Factor between 0 and 1
+constexpr float kDefaultUseTolls = 0.5f;       // Factor between 0 and 1
+constexpr float kDefaultUseTrails = 0.0f;      // Factor between 0 and 1
 constexpr float kDefaultUseTwistyRoads = 0.5f; // Factor between 0 and 1. 0.5 = neutral
 
 constexpr Surface kMinimumMotorcycleSurface = Surface::kImpassable;
@@ -59,9 +59,9 @@ constexpr ranged_default_t<float> kUseTwistyRoadsRange{0, kDefaultUseTwistyRoads
 
 // Twisty roads constants
 constexpr float kTwistySpeedFloor = 50.0f;     // km/h - no twisty bonus below this speed
-constexpr float kTwistyReferenceSpeed = 80.0f;  // km/h - normalizing speed for perceived twistiness
-constexpr float kMaxTwistyFactor = 3.0f;          // amplifier for twisty preference (clamped in EdgeCost)
-constexpr float kMinTwistyMultiplier = 0.05f;     // floor: never reduce cost below 5% of original
+constexpr float kTwistyReferenceSpeed = 80.0f; // km/h - normalizing speed for perceived twistiness
+constexpr float kMaxTwistyFactor = 3.0f;      // amplifier for twisty preference (clamped in EdgeCost)
+constexpr float kMinTwistyMultiplier = 0.05f; // floor: never reduce cost below 5% of original
 
 constexpr ranged_default_t<uint32_t> kMotorcycleSpeedRange{10, baldr::kMaxAssumedSpeed,
                                                            baldr::kMaxSpeedKph};

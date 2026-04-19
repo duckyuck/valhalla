@@ -30,10 +30,10 @@ namespace {
 constexpr float kDefaultServicePenalty = 75.0f; // Seconds
 
 // Other options
-constexpr float kDefaultUseHighways = 0.5f; // Default preference of using a motorway or trunk 0-1
-constexpr float kDefaultUseTolls = 0.5f;    // Default preference of using toll roads 0-1
-constexpr float kDefaultUseTracks = 0.f;    // Default preference of using tracks 0-1
-constexpr float kDefaultUseDistance = 0.f;  // Default preference of using distance vs time 0-1
+constexpr float kDefaultUseHighways = 0.5f;    // Default preference of using a motorway or trunk 0-1
+constexpr float kDefaultUseTolls = 0.5f;       // Default preference of using toll roads 0-1
+constexpr float kDefaultUseTracks = 0.f;       // Default preference of using tracks 0-1
+constexpr float kDefaultUseDistance = 0.f;     // Default preference of using distance vs time 0-1
 constexpr float kDefaultUseTwistyRoads = 0.5f; // Factor between 0 and 1. 0.5 = neutral
 constexpr uint32_t kDefaultRestrictionProbability = 100; // Default percentage of allowing probable
                                                          // restrictions 0% means do not include them
@@ -79,9 +79,9 @@ constexpr ranged_default_t<float> kUseTwistyRoadsRange{0, kDefaultUseTwistyRoads
 
 // Twisty roads constants
 constexpr float kTwistySpeedFloor = 50.0f;     // km/h - no twisty bonus below this speed
-constexpr float kTwistyReferenceSpeed = 80.0f;  // km/h - normalizing speed for perceived twistiness
-constexpr float kMaxTwistyFactor = 3.0f;          // amplifier for twisty preference (clamped in EdgeCost)
-constexpr float kMinTwistyMultiplier = 0.05f;     // floor: never reduce cost below 5% of original
+constexpr float kTwistyReferenceSpeed = 80.0f; // km/h - normalizing speed for perceived twistiness
+constexpr float kMaxTwistyFactor = 3.0f;      // amplifier for twisty preference (clamped in EdgeCost)
+constexpr float kMinTwistyMultiplier = 0.05f; // floor: never reduce cost below 5% of original
 
 constexpr ranged_default_t<uint32_t> kProbabilityRange{0, kDefaultRestrictionProbability, 100};
 constexpr ranged_default_t<uint32_t> kVehicleSpeedRange{10, baldr::kMaxAssumedSpeed,

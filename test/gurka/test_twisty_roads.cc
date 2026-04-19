@@ -1,4 +1,5 @@
 #include "gurka.h"
+
 #include <gtest/gtest.h>
 
 using namespace valhalla;
@@ -70,9 +71,8 @@ TEST_F(TwistyRoads, DefaultTakesStraightPath) {
 
 // Test 2: use_twisty_roads=1.0 prefers twisty — should take the serpentine
 TEST_F(TwistyRoads, PreferTwistyTakesCurvyPath) {
-  auto result =
-      gurka::do_action(Options::route, map_, {"A", "B"}, "motorcycle",
-                       {{"/costing_options/motorcycle/use_twisty_roads", "1.0"}});
+  auto result = gurka::do_action(Options::route, map_, {"A", "B"}, "motorcycle",
+                                 {{"/costing_options/motorcycle/use_twisty_roads", "1.0"}});
   const auto path = gurka::detail::get_paths(result).front();
   const std::vector<std::string> straight_path = {"AB"};
   EXPECT_NE(path, straight_path) << "Expected twisty path but got straight path";
@@ -80,17 +80,15 @@ TEST_F(TwistyRoads, PreferTwistyTakesCurvyPath) {
 
 // Test 3: use_twisty_roads=0.0 avoids twisty roads — takes the straight path
 TEST_F(TwistyRoads, AvoidTwistyTakesStraightPath) {
-  auto result =
-      gurka::do_action(Options::route, map_, {"A", "B"}, "motorcycle",
-                       {{"/costing_options/motorcycle/use_twisty_roads", "0.0"}});
+  auto result = gurka::do_action(Options::route, map_, {"A", "B"}, "motorcycle",
+                                 {{"/costing_options/motorcycle/use_twisty_roads", "0.0"}});
   gurka::assert::raw::expect_path(result, {"AB"});
 }
 
 // Test 4: use_twisty_roads works for auto costing too
 TEST_F(TwistyRoads, AutoCostingPrefersTwisty) {
-  auto result =
-      gurka::do_action(Options::route, map_, {"A", "B"}, "auto",
-                       {{"/costing_options/auto/use_twisty_roads", "1.0"}});
+  auto result = gurka::do_action(Options::route, map_, {"A", "B"}, "auto",
+                                 {{"/costing_options/auto/use_twisty_roads", "1.0"}});
   const auto path = gurka::detail::get_paths(result).front();
   const std::vector<std::string> straight_path = {"AB"};
   EXPECT_NE(path, straight_path) << "Expected twisty path but got straight path";
@@ -129,9 +127,8 @@ gurka::map TwistyRoadsSpeedFloor::map_ = {};
 // Test 5: Speed floor — even at use_twisty_roads=1.0, no twisty bonus on <50 km/h roads.
 // Router takes the straight (shorter) path.
 TEST_F(TwistyRoadsSpeedFloor, SpeedFloorPreventsTwistyBonus) {
-  auto result =
-      gurka::do_action(Options::route, map_, {"A", "B"}, "motorcycle",
-                       {{"/costing_options/motorcycle/use_twisty_roads", "1.0"}});
+  auto result = gurka::do_action(Options::route, map_, {"A", "B"}, "motorcycle",
+                                 {{"/costing_options/motorcycle/use_twisty_roads", "1.0"}});
   gurka::assert::raw::expect_path(result, {"AB"});
 }
 

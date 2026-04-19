@@ -162,10 +162,9 @@ protected:
    * additional entries are filtered through share+stretch validators against
    * the optimal before being included.
    */
-  std::vector<std::vector<PathInfo>>
-  FormPaths(baldr::GraphReader& graphreader,
-            const valhalla::Location& origin,
-            const valhalla::Location& destination);
+  std::vector<std::vector<PathInfo>> FormPaths(baldr::GraphReader& graphreader,
+                                               const valhalla::Location& origin,
+                                               const valhalla::Location& destination);
 
   /**
    * Run a single A* search from origin to destination and return whatever
@@ -173,10 +172,9 @@ protected:
    * pass the validators). Callers drive penalty-based reruns by seeding
    * penalized_edges_ between invocations.
    */
-  std::vector<std::vector<PathInfo>>
-  ExecuteSearch(valhalla::Location& origin,
-                valhalla::Location& destination,
-                baldr::GraphReader& graphreader);
+  std::vector<std::vector<PathInfo>> ExecuteSearch(valhalla::Location& origin,
+                                                   valhalla::Location& destination,
+                                                   baldr::GraphReader& graphreader);
 
   sif::TravelMode mode_; // Current travel mode
   uint8_t travel_type_;  // Current travel type

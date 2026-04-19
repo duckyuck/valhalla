@@ -17,8 +17,8 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 
 using namespace valhalla::baldr;
 
@@ -34,32 +34,36 @@ int main(int argc, char** argv) {
 
   for (auto tile_id : reader.GetTileSet()) {
     auto tile = reader.GetGraphTile(tile_id);
-    if (!tile) continue;
+    if (!tile)
+      continue;
 
     const uint32_t n = tile->header()->directededgecount();
     for (uint32_t i = 0; i < n; ++i) {
       GraphId eid = tile_id;
       eid.set_id(i);
       const DirectedEdge* e = tile->directededge(i);
-      if (!(e->forwardaccess() & kAutoAccess)) continue;
-      if (e->is_shortcut()) continue;
+      if (!(e->forwardaccess() & kAutoAccess))
+        continue;
+      if (e->is_shortcut())
+        continue;
 
       auto shape = tile->edgeinfo(e).shape();
-      if (shape.empty()) continue;
+      if (shape.empty())
+        continue;
       const auto& mid = shape[shape.size() / 2];
 
       // Baseline speeds. If the tile lacks predicted-speed data, GetSpeed
       // falls back to e->speed(). In either case we only need a stable
       // OSM-derived baseline to preserve in our rewritten CSV.
-      float freeflow    = static_cast<float>(tile->GetSpeed(e, kFreeFlowMask, 0));
+      float freeflow = static_cast<float>(tile->GetSpeed(e, kFreeFlowMask, 0));
       float constrained = static_cast<float>(tile->GetSpeed(e, kConstrainedFlowMask, 0));
-      if (freeflow    <= 0.0f) freeflow    = static_cast<float>(e->speed());
-      if (constrained <= 0.0f) constrained = freeflow;
+      if (freeflow <= 0.0f)
+        freeflow = static_cast<float>(e->speed());
+      if (constrained <= 0.0f)
+        constrained = freeflow;
 
-      std::printf("%u/%u/%u,%.6f,%.6f,%.1f,%.1f\n",
-                  eid.level(), eid.tileid(), eid.id(),
-                  mid.lng(), mid.lat(),
-                  freeflow, constrained);
+      std::printf("%u/%u/%u,%.6f,%.6f,%.1f,%.1f\n", eid.level(), eid.tileid(), eid.id(), mid.lng(),
+                  mid.lat(), freeflow, constrained);
     }
   }
   return 0;

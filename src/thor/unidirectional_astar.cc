@@ -224,8 +224,7 @@ inline bool UnidirectionalAStar<expansion_direction, FORWARD>::ExpandInner(
                        ? costing_->EdgeCost(meta.edge, meta.edge_id, tile, time_info, flow_sources)
                        : costing_->EdgeCost(opp_edge, opp_edge_id, endtile, time_info, flow_sources);
   // Penalize edges we've already used in prior paths (for penalty-rerun alternates).
-  if (!penalized_edges_.empty() &&
-      penalized_edges_.count(FORWARD ? meta.edge_id : opp_edge_id)) {
+  if (!penalized_edges_.empty() && penalized_edges_.count(FORWARD ? meta.edge_id : opp_edge_id)) {
     edge_cost.cost *= kAlternatePenaltyFactor;
   }
   auto reader_getter = [&graphreader]() { return baldr::LimitedGraphReader(graphreader); };
@@ -491,14 +490,13 @@ std::vector<PathInfo> UnidirectionalAStar<ExpansionType::reverse>::FormPath(cons
 
 template <const ExpansionType expansion_direction, const bool FORWARD>
 std::vector<std::vector<PathInfo>>
-UnidirectionalAStar<expansion_direction, FORWARD>::FormPaths(
-    GraphReader& /*graphreader*/,
-    const valhalla::Location& origin,
-    const valhalla::Location& destination) {
+UnidirectionalAStar<expansion_direction, FORWARD>::FormPaths(GraphReader& /*graphreader*/,
+                                                             const valhalla::Location& origin,
+                                                             const valhalla::Location& destination) {
   std::vector<std::vector<PathInfo>> paths;
-  LOG_DEBUG("UnidirectionalAStar::FormPaths: candidates=" +
-            std::to_string(candidate_dest_labels_.size()) +
-            " desired=" + std::to_string(desired_paths_count_));
+  LOG_DEBUG(
+      "UnidirectionalAStar::FormPaths: candidates=" + std::to_string(candidate_dest_labels_.size()) +
+      " desired=" + std::to_string(desired_paths_count_));
   if (candidate_dest_labels_.empty()) {
     return paths;
   }
@@ -538,9 +536,8 @@ UnidirectionalAStar<expansion_direction, FORWARD>::FormPaths(
   }
 
   LOG_DEBUG("UnidirectionalAStar::FormPaths: returning=" + std::to_string(paths.size()) +
-            " rejected{share=" + std::to_string(rejected_share) +
-            ",stretch=" + std::to_string(rejected_stretch) +
-            ",empty=" + std::to_string(rejected_empty) + "}");
+            " rejected{share=" + std::to_string(rejected_share) + ",stretch=" +
+            std::to_string(rejected_stretch) + ",empty=" + std::to_string(rejected_empty) + "}");
   return paths;
 }
 
@@ -745,8 +742,7 @@ std::vector<std::vector<PathInfo>> UnidirectionalAStar<expansion_direction, FORW
   // Penalty reruns: steer A* away from edges used by already-accepted paths.
   const float max_sharing = get_max_sharing(origin, destination);
   std::vector<std::unordered_set<GraphId>> shared_edgeids;
-  for (uint32_t rerun = 0;
-       rerun < kMaxAlternateReruns && paths.size() < desired_paths_count_;
+  for (uint32_t rerun = 0; rerun < kMaxAlternateReruns && paths.size() < desired_paths_count_;
        ++rerun) {
     for (const auto& path : paths) {
       for (const auto& pi : path) {
@@ -762,12 +758,10 @@ std::vector<std::vector<PathInfo>> UnidirectionalAStar<expansion_direction, FORW
     if (!validate_alternate_by_sharing(shared_edgeids, paths, candidate, max_sharing) ||
         !validate_alternate_by_stretch(paths.front(), candidate) ||
         !validate_alternate_by_local_optimality(candidate)) {
-      LOG_INFO("UnidirectionalAStar: penalty-rerun " + std::to_string(rerun) +
-               " candidate rejected");
+      LOG_INFO("UnidirectionalAStar: penalty-rerun " + std::to_string(rerun) + " candidate rejected");
       break;
     }
-    LOG_INFO("UnidirectionalAStar: penalty-rerun " + std::to_string(rerun) +
-             " candidate accepted");
+    LOG_INFO("UnidirectionalAStar: penalty-rerun " + std::to_string(rerun) + " candidate accepted");
     paths.emplace_back(std::move(candidate));
   }
 
