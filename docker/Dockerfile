@@ -44,9 +44,15 @@ ARG BUILD_TYPE
 ARG VERSION_MODIFIER=""
 
 # switch back to -DCMAKE_BUILD_TYPE=RelWithDebInfo and uncomment the block below if you want debug symbols
-RUN cmake -B build -DCMAKE_BUILD_TYPE=${BUILD_TYPE-"Release"} -DCMAKE_C_COMPILER=gcc -DENABLE_TESTS=Off \
+# ENABLE_TESTS=On + `make check` run the thor/sif/mjolnir unit & gurka tests as
+# part of the image bake. Joyride doesn't run GH Actions on this fork, so this
+# is the only automated test pass between code changes and prod. If tests fail
+# the build aborts and deploy.sh won't ship. See
+# docs/decisions/bidirectional-weather-routing.md.
+RUN cmake -B build -DCMAKE_BUILD_TYPE=${BUILD_TYPE-"Release"} -DCMAKE_C_COMPILER=gcc -DENABLE_TESTS=On \
   -DENABLE_SINGLE_FILES_WERROR=Off -DVALHALLA_VERSION_MODIFIER=${VERSION_MODIFIER} -DINSTALL_TEST_LIB=${INSTALL_TEST_LIB:-"Off"} && \
   make -C build all ${ADDITIONAL_TARGETS} -j${CONCURRENCY:-$(nproc)} && \
+  ASAN_OPTIONS=detect_leaks=0:symbolize=1 make -C build check -j${CONCURRENCY:-$(nproc)} && \
   make -C build install
 
 # we wont leave the source around but we'll drop the commit hash and we'll also keep the locales
