@@ -35,10 +35,15 @@ uint32_t env_u32(const char* name, uint32_t def) {
 const uint32_t kMaxAlternateIterations = env_u32("VALHALLA_MAX_ALT_ITERATIONS", 200000);
 
 // Cost multiplier applied to edges in penalized_edges_ during penalty reruns.
-const double kAlternatePenaltyFactor = env_double("VALHALLA_ALT_PENALTY_FACTOR", 3.0);
+// Tuned 2026-04-20 on a 15-pair Norway OD battery (see
+// scripts/valhalla/tuning/). 4.0 yields ~14% more divergent alternates than
+// the spike's original 3.0 with no regression on rejection rate.
+const double kAlternatePenaltyFactor = env_double("VALHALLA_ALT_PENALTY_FACTOR", 4.0);
 
-// Upper bound on penalty reruns per GetBestPath call.
-const uint32_t kMaxAlternateReruns = env_u32("VALHALLA_MAX_ALT_RERUNS", 4);
+// Upper bound on penalty reruns per GetBestPath call. Tuned down from 4 → 2
+// because the sweep showed additional reruns don't improve diversity (most
+// alternates accept in reruns 1-2) but do add ~400ms p95 latency.
+const uint32_t kMaxAlternateReruns = env_u32("VALHALLA_MAX_ALT_RERUNS", 2);
 
 template <const ExpansionType expansion_direction, const bool FORWARD>
 UnidirectionalAStar<expansion_direction, FORWARD>::UnidirectionalAStar(
