@@ -567,8 +567,13 @@ Cost AutoCost::EdgeCost(const baldr::DirectedEdge* edge,
       break;
   }
 
-  // Apply twisty road preference based on curvature and speed
-  if (twisty_factor_ != 0.0f && edge_speed >= kTwistySpeedFloor) {
+  // Apply twisty road preference based on curvature and speed.
+  //
+  // Roundabouts are excluded: their geometry is a tight circle (curvature ~15
+  // by shape) and OSM often inherits the incoming road's speed tag (≥50 km/h),
+  // so the twisty gate lets them through and the router ends up rewarding
+  // detours through them. Humans don't experience roundabouts as fun-twisty.
+  if (twisty_factor_ != 0.0f && edge_speed >= kTwistySpeedFloor && !edge->roundabout()) {
     float curvature = static_cast<float>(edge->curvature()) / 15.0f;
     float speed_weight = static_cast<float>(edge_speed) / kTwistyReferenceSpeed;
     float perceived_twistiness = std::min(curvature * speed_weight, 1.0f);
