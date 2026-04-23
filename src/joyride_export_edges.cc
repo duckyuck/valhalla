@@ -3,11 +3,11 @@
 // Walk every drivable edge in the base Valhalla tileset and emit one CSV
 // line per edge:
 //
-//   edge_id,centroid_lon,centroid_lat,freeflow_kmh,constrained_kmh
+//   edge_id,lon0,lat0,freeflow_kmh,constrained_kmh,lon1,lat1,...
 //
 // where edge_id is Valhalla's GraphId serialized as "level/tile/index".
 // Used by the Joyride dryness-rebake pipeline to associate each Valhalla
-// edge with its weather grid cell and baseline speeds.
+// edge with the weather grid cells it crosses and its baseline speeds.
 
 #include "baldr/directededge.h"
 #include "baldr/graphconstants.h"
@@ -50,8 +50,6 @@ int main(int argc, char** argv) {
       auto shape = tile->edgeinfo(e).shape();
       if (shape.empty())
         continue;
-      const auto& mid = shape[shape.size() / 2];
-
       // Baseline speeds. If the tile lacks predicted-speed data, GetSpeed
       // falls back to e->speed(). In either case we only need a stable
       // OSM-derived baseline to preserve in our rewritten CSV.
@@ -62,8 +60,14 @@ int main(int argc, char** argv) {
       if (constrained <= 0.0f)
         constrained = freeflow;
 
-      std::printf("%u/%u/%u,%.6f,%.6f,%.1f,%.1f\n", eid.level(), eid.tileid(), eid.id(), mid.lng(),
-                  mid.lat(), freeflow, constrained);
+      const auto& first = shape.front();
+      std::printf("%u/%u/%u,%.6f,%.6f,%.1f,%.1f", eid.level(), eid.tileid(), eid.id(),
+                  first.lng(), first.lat(), freeflow, constrained);
+      for (size_t j = 1; j < shape.size(); ++j) {
+        const auto& p = shape[j];
+        std::printf(",%.6f,%.6f", p.lng(), p.lat());
+      }
+      std::printf("\n");
     }
   }
   return 0;
