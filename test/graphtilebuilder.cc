@@ -3,13 +3,19 @@
 #include "baldr/tilehierarchy.h"
 #include "midgard/encoded.h"
 #include "midgard/pointll.h"
+#include "midgard/util.h"
+#include "mjolnir/add_weather_profiles.h"
+
+#include <boost/property_tree/ptree.hpp>
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -87,6 +93,30 @@ void add_weather_test_edges(test_graph_tile_builder& tilebuilder, uint32_t edge_
                                                {1, static_cast<float>(i)}},
                             {"edge_" + std::to_string(i)}, {}, {}, 0, added);
   }
+}
+
+std::string encode_weather_profile(
+    const std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek>& profile) {
+  return encode64(std::string(reinterpret_cast<const char*>(profile.data()), profile.size()));
+}
+
+void write_weather_csv(const std::string& weather_dir,
+                       const GraphId& tile_id,
+                       uint8_t precipitation,
+                       uint8_t wet_road) {
+  std::filesystem::path csv_path{weather_dir};
+  csv_path.append(GraphTile::FileSuffix(tile_id, ".csv"));
+  std::filesystem::create_directories(csv_path.parent_path());
+
+  std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek> precipitation_profile{};
+  std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek> wet_road_profile{};
+  precipitation_profile[0] = precipitation;
+  wet_road_profile[1] = wet_road;
+
+  std::ofstream csv(csv_path);
+  csv << std::to_string(tile_id.level()) << "/" << std::to_string(tile_id.tileid()) << "/0,"
+      << encode_weather_profile(precipitation_profile) << ","
+      << encode_weather_profile(wet_road_profile) << "\n";
 }
 
 void assert_tile_equalish(const GraphTile& a,
@@ -716,6 +746,45 @@ TEST(GraphTileBuilder, TestWeatherProfilesRemainBeforePredictedSpeedTail) {
   EXPECT_NEAR(test_tile.get_predicted_speed(1, 9 * 3600), 35.0f, 0.5f);
   EXPECT_NEAR(test_tile.get_precipitation(0, 8 * 3600), 1.5f, 0.01f);
   EXPECT_NEAR(test_tile.get_wet_road(1, 9 * 3600), 0.375f, 0.01f);
+}
+
+TEST(GraphTileBuilder, TestProcessWeatherTilesKeepsWorkerPromisesAlive) {
+  std::random_device random;
+  const auto scratch_dir = std::filesystem::temp_directory_path() /
+                           ("builder_weather_process_threaded_" +
+                            std::to_string(std::chrono::steady_clock::now()
+                                               .time_since_epoch()
+                                               .count()) +
+                            "_" + std::to_string(random()));
+  const std::string test_dir = (scratch_dir / "tiles").string();
+  const std::string weather_dir = (scratch_dir / "weather").string();
+  std::filesystem::remove_all(scratch_dir);
+  std::filesystem::remove_all(test_dir);
+  std::filesystem::remove_all(weather_dir);
+
+  constexpr uint32_t tile_count = 16;
+  for (uint32_t i = 0; i < tile_count; ++i) {
+    const GraphId tile_id(i, 2, 0);
+    test_graph_tile_builder base_tilebuilder(test_dir, tile_id, false);
+    add_weather_test_edges(base_tilebuilder, 1);
+    base_tilebuilder.StoreTileData();
+    write_weather_csv(weather_dir, tile_id, static_cast<uint8_t>(i + 1),
+                      static_cast<uint8_t>(i + 2));
+  }
+
+  boost::property_tree::ptree config;
+  config.put("mjolnir.concurrency", 4);
+
+  EXPECT_NO_THROW(ProcessWeatherTiles(test_dir, weather_dir, config));
+
+  for (uint32_t i = 0; i < tile_count; ++i) {
+    const GraphId tile_id(i, 2, 0);
+    test_graph_tile test_tile(test_dir, tile_id);
+    EXPECT_NEAR(test_tile.get_precipitation(0, 0),
+                (static_cast<float>(i + 1) / 255.0f) * kBackendPrecipitationMax, 0.001f);
+    EXPECT_NEAR(test_tile.get_wet_road(0, GraphTile::kWeatherBucketSizeSeconds),
+                (static_cast<float>(i + 2) / 255.0f) * kBackendWetRoadMax, 0.001f);
+  }
 }
 
 struct fake_tile : public GraphTile {

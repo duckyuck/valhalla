@@ -229,6 +229,7 @@ void ProcessWeatherTiles(const std::string& tile_dir,
   auto chunk_size = (weather_tiles.size() + threads - 1) / threads;
 
   std::vector<std::thread> workers;
+  std::vector<std::promise<WeatherStats>> promises(threads);
   std::vector<std::future<WeatherStats>> futures;
   workers.reserve(threads);
   futures.reserve(threads);
@@ -240,9 +241,8 @@ void ProcessWeatherTiles(const std::string& tile_dir,
       break;
     }
 
-    std::promise<WeatherStats> promise;
-    futures.emplace_back(promise.get_future());
-    workers.emplace_back(UpdateTiles, tile_dir, begin, end, std::ref(promise));
+    futures.emplace_back(promises[i].get_future());
+    workers.emplace_back(UpdateTiles, tile_dir, begin, end, std::ref(promises[i]));
   }
 
   for (auto& worker : workers) {
