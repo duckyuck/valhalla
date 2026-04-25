@@ -88,11 +88,11 @@ constexpr float kTwistySpeedFloor = 50.0f;     // km/h - no twisty bonus below t
 constexpr float kTwistyReferenceSpeed = 80.0f; // km/h - normalizing speed for perceived twistiness
 constexpr float kMaxTwistyFactor = 3.0f;      // amplifier for twisty preference (clamped in EdgeCost)
 constexpr float kMinTwistyMultiplier = 0.05f; // floor: never reduce cost below 5% of original
-constexpr float kWeatherWetRoadNormalizer = 0.5f;
-constexpr float kWeatherWetRoadWeight = 0.5f;
-constexpr float kWeatherPrecipitationNormalizer = 5.0f;
-constexpr float kWeatherPrecipitationWeight = 0.2f;
-constexpr float kWeatherMultiplierFloor = 0.4f;
+constexpr float kWeatherWetRoadNormalizer = 0.3f;
+constexpr float kWeatherWetRoadWeight = 1.2f;
+constexpr float kWeatherPrecipitationNormalizer = 2.0f;
+constexpr float kWeatherPrecipitationWeight = 0.8f;
+constexpr float kWeatherMultiplierFloor = 0.2f;
 constexpr uint8_t kNonPredictedFlowMask = kDefaultFlowMask & ~kPredictedFlowMask;
 
 constexpr ranged_default_t<uint32_t> kProbabilityRange{0, kDefaultRestrictionProbability, 100};
