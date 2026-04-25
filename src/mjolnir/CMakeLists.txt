@@ -24,6 +24,7 @@ file(GLOB headers ${VALHALLA_SOURCE_DIR}/valhalla/mjolnir/*.h)
 set(sources
   ${CMAKE_CURRENT_BINARY_DIR}/graph_lua_proc.h
   ${CMAKE_CURRENT_BINARY_DIR}/admin_lua_proc.h
+  add_weather_profiles.cc
   add_predicted_speeds.cc
   admin.cc
   adminbuilder.cc

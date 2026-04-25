@@ -357,6 +357,20 @@ Api get_request(const std::string& request_str, const Options::Action action) {
   return request;
 }
 
+std::string get_speed_types_request_str(const std::string& costing,
+                                        const std::vector<std::string>& speed_types) {
+  std::string request = R"({"costing":")" + costing + R"(","costing_options":{")" + costing +
+                        R"(":{"speed_types":[)";
+  for (size_t i = 0; i < speed_types.size(); ++i) {
+    if (i > 0) {
+      request += ",";
+    }
+    request += R"(")" + speed_types[i] + R"(")";
+  }
+  request += R"(]}}})";
+  return request;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // test parsing methods
 std::string get_costing_str(Costing::Type costing) {
@@ -1247,6 +1261,36 @@ void test_avoid_bad_surfaces_parsing(const Costing::Type costing_type,
       get_request(get_request_str(grandparent_key, parent_key, key, specified_value), action);
   const auto& options = request.options().costings().find(costing_type)->second.options();
   validate(key, expected_value, options.avoid_bad_surfaces());
+}
+
+void test_avoid_precipitation_parsing(const Costing::Type costing_type,
+                                      const float specified_value,
+                                      const float expected_value,
+                                      const Options::Action action = Options::route) {
+  auto costing_str = get_costing_str(costing_type);
+  const std::string grandparent_key = "costing_options";
+  const std::string& parent_key = costing_str;
+  const std::string key = "avoid_precipitation";
+
+  Api request =
+      get_request(get_request_str(grandparent_key, parent_key, key, specified_value), action);
+  const auto& options = request.options().costings().find(costing_type)->second.options();
+  validate(key, expected_value, options.avoid_precipitation());
+}
+
+void test_avoid_wet_roads_parsing(const Costing::Type costing_type,
+                                  const float specified_value,
+                                  const float expected_value,
+                                  const Options::Action action = Options::route) {
+  auto costing_str = get_costing_str(costing_type);
+  const std::string grandparent_key = "costing_options";
+  const std::string& parent_key = costing_str;
+  const std::string key = "avoid_wet_roads";
+
+  Api request =
+      get_request(get_request_str(grandparent_key, parent_key, key, specified_value), action);
+  const auto& options = request.options().costings().find(costing_type)->second.options();
+  validate(key, expected_value, options.avoid_wet_roads());
 }
 
 void test_transit_start_end_max_distance_parsing(const Costing::Type costing_type,
@@ -2640,6 +2684,68 @@ TEST(ParseRequest, test_avoid_bad_surfaces) {
   test_avoid_bad_surfaces_parsing(costing, 0.5f, 0.5f);
   test_avoid_bad_surfaces_parsing(costing, -2.f, default_value);
   test_avoid_bad_surfaces_parsing(costing, 2.f, default_value);
+}
+
+TEST(ParseRequest, test_avoid_precipitation) {
+  constexpr float default_value = 0.0f;
+  for (const auto costing : {Costing::auto_, Costing::motorcycle}) {
+    test_avoid_precipitation_parsing(costing, default_value, default_value);
+    test_avoid_precipitation_parsing(costing, 0.4f, 0.4f);
+    test_avoid_precipitation_parsing(costing, 1.0f, 1.0f);
+    test_avoid_precipitation_parsing(costing, -2.0f, default_value);
+    test_avoid_precipitation_parsing(costing, 2.0f, default_value);
+  }
+}
+
+TEST(ParseRequest, test_avoid_wet_roads) {
+  constexpr float default_value = 0.0f;
+  for (const auto costing : {Costing::auto_, Costing::motorcycle}) {
+    test_avoid_wet_roads_parsing(costing, default_value, default_value);
+    test_avoid_wet_roads_parsing(costing, 0.4f, 0.4f);
+    test_avoid_wet_roads_parsing(costing, 1.0f, 1.0f);
+    test_avoid_wet_roads_parsing(costing, -2.0f, default_value);
+    test_avoid_wet_roads_parsing(costing, 2.0f, default_value);
+  }
+}
+
+TEST(ParseRequest, test_speed_types_presence) {
+  {
+    Api request = get_request(R"({"costing":"auto","date_time":{"type":1,"value":"2025-06-22T08:00"}})", Options::route);
+    const auto& options = request.options().costings().find(Costing::auto_)->second.options();
+    EXPECT_EQ(options.has_flow_mask_case(), Costing_Options::HAS_FLOW_MASK_NOT_SET);
+  }
+
+  {
+    Api request = get_request(R"({"costing":"auto","date_time":{"type":0},"costing_options":{"auto":{"speed_types":["freeflow","constrained","predicted","current"]}}})",
+                              Options::route);
+    const auto& options = request.options().costings().find(Costing::auto_)->second.options();
+    EXPECT_EQ(options.has_flow_mask_case(), Costing_Options::kFlowMask);
+    EXPECT_EQ(options.flow_mask(), baldr::kDefaultFlowMask);
+  }
+
+  {
+    Api request = get_request(get_speed_types_request_str("auto", {}), Options::route);
+    const auto& options = request.options().costings().find(Costing::auto_)->second.options();
+    EXPECT_EQ(options.has_flow_mask_case(), Costing_Options::kFlowMask);
+    EXPECT_EQ(options.flow_mask(), baldr::kNoFlowMask);
+  }
+
+  {
+    Api request = get_request(
+        R"({"costing":"motorcycle","date_time":{"type":1,"value":"2025-06-22T08:00"}})",
+        Options::route);
+    const auto& options = request.options().costings().find(Costing::motorcycle)->second.options();
+    EXPECT_EQ(options.has_flow_mask_case(), Costing_Options::HAS_FLOW_MASK_NOT_SET);
+  }
+
+  {
+    Api request = get_request(
+        R"({"costing":"motorcycle","date_time":{"type":0},"costing_options":{"motorcycle":{"speed_types":["freeflow","constrained","predicted","current"]}}})",
+        Options::route);
+    const auto& options = request.options().costings().find(Costing::motorcycle)->second.options();
+    EXPECT_EQ(options.has_flow_mask_case(), Costing_Options::kFlowMask);
+    EXPECT_EQ(options.flow_mask(), baldr::kDefaultFlowMask);
+  }
 }
 
 TEST(ParseRequest, test_cycling_speed) {

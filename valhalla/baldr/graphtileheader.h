@@ -568,6 +568,22 @@ public:
     predictedspeeds_offset_ = offset;
   }
 
+  uint32_t precipitation_offset() const {
+    return empty_slots_[0];
+  }
+
+  void set_precipitation_offset(const uint32_t offset) {
+    empty_slots_[0] = offset;
+  }
+
+  uint32_t wet_road_offset() const {
+    return empty_slots_[1];
+  }
+
+  void set_wet_road_offset(const uint32_t offset) {
+    empty_slots_[1] = offset;
+  }
+
   /**
    * Get the offset to the end of the tile
    * @return the number of bytes in the tile, unless the last slot is used

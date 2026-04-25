@@ -34,6 +34,7 @@
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 #endif
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <iterator>
@@ -142,6 +143,21 @@ class GraphTile {
 #endif // ENABLE_THREAD_SAFE_TILE_REF_COUNT
 public:
   static const constexpr char* kTilePathPattern = "{tilePath}";
+  static constexpr uint32_t kWeatherBucketsPerWeek = 7 * 24;
+  static constexpr uint32_t kWeatherBucketSizeSeconds = 60 * 60;
+  static constexpr float kPrecipitationMax = 5.0f;
+  static constexpr float kWetRoadMax = 0.5f;
+
+  // Byte size of a compact weather profile table covering `count` edges.
+  // Offsets index into a flat uint8[] table; the largest offset plus one full
+  // hourly profile gives the table extent. Shared between reader and builder
+  // so the on-disk layout stays in lockstep.
+  static uint32_t CompactWeatherTableSize(const uint32_t* offsets, uint32_t count) {
+    if (count == 0) {
+      return 0;
+    }
+    return *std::max_element(offsets, offsets + count) + kWeatherBucketsPerWeek;
+  }
 
   /**
    * Constructs with a given GraphId. Reads the graph tile from file
@@ -773,6 +789,48 @@ public:
    */
   std::span<LaneConnectivity> GetLaneConnectivity(const uint32_t idx) const;
 
+  float precipitation(const uint32_t idx, const uint32_t seconds_of_week) const {
+    if (!precipitation_profile_offsets_ || !precipitation_profiles_) {
+      return 0.f;
+    }
+    const auto bucket = (seconds_of_week / kWeatherBucketSizeSeconds) % kWeatherBucketsPerWeek;
+    return static_cast<float>(precipitation_profiles_[precipitation_profile_offsets_[idx] + bucket]) /
+           255.0f * kPrecipitationMax;
+  }
+
+  float precipitation(const uint32_t idx) const {
+    return precipitation(idx, 0);
+  }
+
+  float precipitation(const DirectedEdge* edge) const {
+    return precipitation(static_cast<uint32_t>(edge - directededges_));
+  }
+
+  float precipitation(const DirectedEdge* edge, const uint32_t seconds_of_week) const {
+    return precipitation(static_cast<uint32_t>(edge - directededges_), seconds_of_week);
+  }
+
+  float wet_road(const uint32_t idx, const uint32_t seconds_of_week) const {
+    if (!wet_road_profile_offsets_ || !wet_road_profiles_) {
+      return 0.f;
+    }
+    const auto bucket = (seconds_of_week / kWeatherBucketSizeSeconds) % kWeatherBucketsPerWeek;
+    return static_cast<float>(wet_road_profiles_[wet_road_profile_offsets_[idx] + bucket]) / 255.0f *
+           kWetRoadMax;
+  }
+
+  float wet_road(const uint32_t idx) const {
+    return wet_road(idx, 0);
+  }
+
+  float wet_road(const DirectedEdge* edge) const {
+    return wet_road(static_cast<uint32_t>(edge - directededges_));
+  }
+
+  float wet_road(const DirectedEdge* edge, const uint32_t seconds_of_week) const {
+    return wet_road(static_cast<uint32_t>(edge - directededges_), seconds_of_week);
+  }
+
   /**
    * Convenience method for use with costing to get the speed for an edge given the directed
    * edge and a time (seconds since start of the week). If the current speed of the edge
@@ -1037,6 +1095,12 @@ protected:
 
   // Predicted speeds
   PredictedSpeeds predictedspeeds_;
+
+  // Optional per-edge offsets into deduplicated hourly weather profiles.
+  const uint32_t* precipitation_profile_offsets_{};
+  const uint32_t* wet_road_profile_offsets_{};
+  const uint8_t* precipitation_profiles_{};
+  const uint8_t* wet_road_profiles_{};
 
   // Map of stop one stops in this tile.
   std::unordered_map<std::string, GraphId> stop_one_stops;

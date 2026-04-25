@@ -7,6 +7,8 @@
 #include "sif/costconstants.h"
 #include "sif/osrm_car_duration.h"
 
+#include <algorithm>
+
 #ifdef INLINE_TEST
 #include "test.h"
 #include "worker.h"
@@ -28,6 +30,8 @@ constexpr float kDefaultUseHighways = 0.5f;    // Factor between 0 and 1
 constexpr float kDefaultUseTolls = 0.5f;       // Factor between 0 and 1
 constexpr float kDefaultUseTrails = 0.0f;      // Factor between 0 and 1
 constexpr float kDefaultUseTwistyRoads = 0.5f; // Factor between 0 and 1. 0.5 = neutral
+constexpr float kDefaultAvoidPrecipitation = 0.0f;
+constexpr float kDefaultAvoidWetRoads = 0.0f;
 
 constexpr Surface kMinimumMotorcycleSurface = Surface::kImpassable;
 
@@ -56,12 +60,20 @@ constexpr ranged_default_t<float> kUseHighwaysRange{0, kDefaultUseHighways, 1.0f
 constexpr ranged_default_t<float> kUseTollsRange{0, kDefaultUseTolls, 1.0f};
 constexpr ranged_default_t<float> kUseTrailsRange{0, kDefaultUseTrails, 1.0f};
 constexpr ranged_default_t<float> kUseTwistyRoadsRange{0, kDefaultUseTwistyRoads, 1.0f};
+constexpr ranged_default_t<float> kAvoidPrecipitationRange{0, kDefaultAvoidPrecipitation, 1.0f};
+constexpr ranged_default_t<float> kAvoidWetRoadsRange{0, kDefaultAvoidWetRoads, 1.0f};
 
 // Twisty roads constants
 constexpr float kTwistySpeedFloor = 50.0f;     // km/h - no twisty bonus below this speed
 constexpr float kTwistyReferenceSpeed = 80.0f; // km/h - normalizing speed for perceived twistiness
 constexpr float kMaxTwistyFactor = 3.0f;      // amplifier for twisty preference (clamped in EdgeCost)
 constexpr float kMinTwistyMultiplier = 0.05f; // floor: never reduce cost below 5% of original
+constexpr float kWeatherWetRoadNormalizer = 0.5f;
+constexpr float kWeatherWetRoadWeight = 0.5f;
+constexpr float kWeatherPrecipitationNormalizer = 5.0f;
+constexpr float kWeatherPrecipitationWeight = 0.2f;
+constexpr float kWeatherMultiplierFloor = 0.4f;
+constexpr uint8_t kNonPredictedFlowMask = kDefaultFlowMask & ~kPredictedFlowMask;
 
 constexpr ranged_default_t<uint32_t> kMotorcycleSpeedRange{10, baldr::kMaxAssumedSpeed,
                                                            baldr::kMaxSpeedKph};
@@ -97,6 +109,79 @@ BaseCostingOptionsConfig GetBaseCostOptsConfig() {
 }
 
 const BaseCostingOptionsConfig kBaseCostOptsConfig = GetBaseCostOptsConfig();
+
+inline float clamp01(const float value) {
+  return std::min(std::max(value, 0.0f), 1.0f);
+}
+
+struct weather_speed_behavior_t {
+  uint8_t flow_mask;
+  bool apply_raw_weather;
+};
+
+inline weather_speed_behavior_t weather_speed_behavior(const uint8_t flow_mask,
+                                                       const bool explicit_flow_mask,
+                                                       const float avoid_precipitation,
+                                                       const float avoid_wet_roads) {
+  if (avoid_precipitation == 0.0f && avoid_wet_roads == 0.0f) {
+    return {flow_mask, false};
+  }
+
+  // Preserve explicit traffic-source requests that include predicted flow.
+  // Raw weather would double count there, so opt out instead of rewriting the mask.
+  if (explicit_flow_mask && (flow_mask & kPredictedFlowMask)) {
+    return {flow_mask, false};
+  }
+
+  // Default speed_types include predicted; remove only that legacy path so raw weather applies once.
+  if (!explicit_flow_mask && flow_mask == kDefaultFlowMask) {
+    return {static_cast<uint8_t>(flow_mask & ~kPredictedFlowMask), true};
+  }
+
+  return {flow_mask, true};
+}
+
+inline float weather_multiplier(const graph_tile_ptr& tile,
+                                const DirectedEdge* edge,
+                                const TimeInfo& time_info,
+                                const float avoid_precipitation,
+                                const float avoid_wet_roads) {
+  if (avoid_precipitation == 0.0f && avoid_wet_roads == 0.0f) {
+    return 1.0f;
+  }
+
+  const float wet_term = avoid_wet_roads *
+                         clamp01(tile->wet_road(edge, time_info.second_of_week) /
+                                 kWeatherWetRoadNormalizer) *
+                         kWeatherWetRoadWeight;
+  const float precipitation_term =
+      avoid_precipitation *
+      clamp01(tile->precipitation(edge, time_info.second_of_week) /
+              kWeatherPrecipitationNormalizer) *
+      kWeatherPrecipitationWeight;
+  const float weather_multiplier =
+      std::max(kWeatherMultiplierFloor, 1.0f - wet_term - precipitation_term);
+
+  return weather_multiplier;
+}
+
+inline float weather_safe_speed_penalty(const DirectedEdge* edge,
+                                        const graph_tile_ptr& tile,
+                                        const TimeInfo& time_info,
+                                        const uint8_t effective_flow_mask,
+                                        const uint8_t flow_sources,
+                                        const uint32_t top_speed,
+                                        const float speed_penalty_factor,
+                                        const float base_edge_speed) {
+  float average_edge_speed = base_edge_speed;
+  if (top_speed != baldr::kMaxAssumedSpeed && (flow_sources & baldr::kCurrentFlowMask)) {
+    average_edge_speed =
+        tile->GetSpeed(edge, effective_flow_mask & (~baldr::kCurrentFlowMask), time_info.second_of_week);
+  }
+
+  return (average_edge_speed > top_speed) ? (average_edge_speed - top_speed) * speed_penalty_factor
+                                          : 0.0f;
+}
 
 } // namespace
 
@@ -301,6 +386,9 @@ public:
   float surface_factor_; // How much the surface factors are applied when using trails
   float highway_factor_; // Factor applied when road is a motorway or trunk
   float twisty_factor_;  // Factor for twisty road preference
+  float avoid_precipitation_; // User preference to avoid precipitation at query time
+  float avoid_wet_roads_;     // User preference to avoid wet roads at query time
+  bool explicit_flow_mask_;   // Whether this request explicitly supplied speed_types
 };
 
 // Constructor
@@ -358,6 +446,10 @@ MotorcycleCost::MotorcycleCost(const Costing& costing)
   // 0.5 = neutral (factor 0), 1.0 = prefer (negative factor), 0.0 = avoid (positive factor)
   float use_twisty_roads = costing_options.use_twisty_roads();
   twisty_factor_ = (use_twisty_roads - 0.5f) * 2.0f; // maps 0-1 to -1.0 to 1.0
+
+  avoid_precipitation_ = costing_options.avoid_precipitation();
+  avoid_wet_roads_ = costing_options.avoid_wet_roads();
+  explicit_flow_mask_ = costing_options.has_flow_mask_case();
 }
 
 // Destructor
@@ -420,12 +512,21 @@ Cost MotorcycleCost::EdgeCost(const baldr::DirectedEdge* edge,
                               const graph_tile_ptr& tile,
                               const baldr::TimeInfo& time_info,
                               uint8_t& flow_sources) const {
-  auto edge_speed = fixed_speed_ == baldr::kDisableFixedSpeed
-                        ? tile->GetSpeed(edge, flow_mask_, time_info.second_of_week, false,
-                                         &flow_sources, time_info.seconds_from_now)
-                        : fixed_speed_;
+  const auto weather_behavior =
+      weather_speed_behavior(flow_mask_, explicit_flow_mask_, avoid_precipitation_, avoid_wet_roads_);
+  const auto effective_flow_mask = weather_behavior.flow_mask;
+  const auto edge_weather_multiplier =
+      weather_behavior.apply_raw_weather
+          ? weather_multiplier(tile, edge, time_info, avoid_precipitation_, avoid_wet_roads_)
+          : 1.0f;
+  const auto base_edge_speed = fixed_speed_ == baldr::kDisableFixedSpeed
+                                   ? tile->GetSpeed(edge, effective_flow_mask, time_info.second_of_week,
+                                                    false, &flow_sources, time_info.seconds_from_now)
+                                   : fixed_speed_;
+  const auto weather_adjusted_edge_speed =
+      std::max<uint32_t>(1, static_cast<uint32_t>(base_edge_speed * edge_weather_multiplier));
 
-  auto final_speed = std::min(edge_speed, top_speed_);
+  auto final_speed = std::min(weather_adjusted_edge_speed, top_speed_);
 
   float sec = (edge->length() * kSpeedFactor[final_speed]);
 
@@ -442,7 +543,8 @@ Cost MotorcycleCost::EdgeCost(const baldr::DirectedEdge* edge,
   float factor = kDensityFactor[edge->density()] +
                  highway_factor_ * kHighwayFactor[static_cast<uint32_t>(edge->classification())] +
                  surface_factor_ * kSurfaceFactor[static_cast<uint32_t>(edge->surface())];
-  factor += SpeedPenalty(edge, tile, time_info, flow_sources, edge_speed);
+  factor += weather_safe_speed_penalty(edge, tile, time_info, effective_flow_mask, flow_sources,
+                                       top_speed_, speed_penalty_factor_, base_edge_speed);
   if (edge->toll()) {
     factor += toll_factor_;
   }
@@ -466,9 +568,9 @@ Cost MotorcycleCost::EdgeCost(const baldr::DirectedEdge* edge,
   // so the twisty gate lets them through and the router ends up rewarding
   // detours through them. Humans don't experience roundabouts as fun-twisty;
   // they brake to ~20, traverse, accelerate. Skip the bonus for them.
-  if (twisty_factor_ != 0.0f && edge_speed >= kTwistySpeedFloor && !edge->roundabout()) {
+  if (twisty_factor_ != 0.0f && base_edge_speed >= kTwistySpeedFloor && !edge->roundabout()) {
     float curvature = static_cast<float>(edge->curvature()) / 15.0f;
-    float speed_weight = static_cast<float>(edge_speed) / kTwistyReferenceSpeed;
+    float speed_weight = static_cast<float>(base_edge_speed) / kTwistyReferenceSpeed;
     float perceived_twistiness = std::min(curvature * speed_weight, 1.0f);
     factor *= std::max(kMinTwistyMultiplier,
                        1.0f - twisty_factor_ * perceived_twistiness * kMaxTwistyFactor);
@@ -631,6 +733,10 @@ void ParseMotorcycleCostOptions(const rapidjson::Document& doc,
   JSON_PBF_RANGED_DEFAULT(co, kUseTollsRange, json, "/use_tolls", use_tolls, warnings);
   JSON_PBF_RANGED_DEFAULT(co, kUseTrailsRange, json, "/use_trails", use_trails, warnings);
   JSON_PBF_RANGED_DEFAULT(co, kUseTwistyRoadsRange, json, "/use_twisty_roads", use_twisty_roads,
+                          warnings);
+  JSON_PBF_RANGED_DEFAULT(co, kAvoidPrecipitationRange, json, "/avoid_precipitation",
+                          avoid_precipitation, warnings);
+  JSON_PBF_RANGED_DEFAULT(co, kAvoidWetRoadsRange, json, "/avoid_wet_roads", avoid_wet_roads,
                           warnings);
   JSON_PBF_RANGED_DEFAULT(co, kMotorcycleSpeedRange, json, "/top_speed", top_speed, warnings);
 }

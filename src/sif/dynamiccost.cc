@@ -455,9 +455,11 @@ void ParseBaseCostOptions(const rapidjson::Value& json,
   if (co->has_flow_mask_case() && co->flow_mask() > kDefaultFlowMask)
     co->clear_flow_mask();
 
-  // defer to json or defaults if no pbf is present
+  // Preserve whether speed_types were explicitly supplied. When omitted, leave
+  // flow_mask unset so runtime code can distinguish implicit defaults from
+  // explicit caller intent that happens to equal the default mask.
   auto speed_types = rapidjson::get_child_optional(json, "/speed_types");
-  if (speed_types || !co->has_flow_mask_case())
+  if (speed_types)
     co->set_flow_mask(SpeedMask_Parse(speed_types));
 
   // named costing

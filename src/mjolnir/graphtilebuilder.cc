@@ -27,6 +27,8 @@ namespace mjolnir {
 
 namespace {
 
+using WeatherProfile = std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek>;
+
 std::vector<ComplexRestrictionBuilder> DeserializeRestrictions(char* restrictions,
                                                                size_t restrictions_size) {
   std::vector<ComplexRestrictionBuilder> builders;
@@ -47,6 +49,49 @@ std::vector<ComplexRestrictionBuilder> DeserializeRestrictions(char* restriction
     offset += cr->SizeOf();
   }
   return builders;
+}
+
+uint32_t old_weather_end_offset(const GraphTileHeader* header) {
+  if (header->precipitation_offset() == 0 || header->wet_road_offset() == 0) {
+    return header->predictedspeeds_count() > 0 ? header->predictedspeeds_offset()
+                                               : header->end_offset();
+  }
+
+  const auto edge_count = header->directededgecount();
+  const auto old_raw_wet_offset =
+      header->precipitation_offset() + edge_count * kBucketsPerWeek * sizeof(uint16_t);
+  if (header->wet_road_offset() == old_raw_wet_offset) {
+    return header->wet_road_offset() + edge_count * kBucketsPerWeek * sizeof(uint16_t);
+  }
+
+  const auto* tile_ptr = reinterpret_cast<const char*>(header);
+  const auto* precipitation_offsets =
+      reinterpret_cast<const uint32_t*>(tile_ptr + header->precipitation_offset());
+  const auto* wet_road_offsets =
+      reinterpret_cast<const uint32_t*>(tile_ptr + header->wet_road_offset());
+  const auto precipitation_profiles_offset =
+      header->wet_road_offset() + edge_count * sizeof(uint32_t);
+  const auto precipitation_profiles_size =
+      GraphTile::CompactWeatherTableSize(precipitation_offsets, edge_count);
+  const auto wet_road_profiles_offset = precipitation_profiles_offset + precipitation_profiles_size;
+  return wet_road_profiles_offset + GraphTile::CompactWeatherTableSize(wet_road_offsets, edge_count);
+}
+
+uint8_t quantize_weather_value(float value, float max_value) {
+  return static_cast<uint8_t>(std::lround(std::clamp(value, 0.0f, max_value) / max_value * 255.0f));
+}
+
+template <class Index>
+uint32_t add_weather_profile(WeatherProfile profile, std::vector<uint8_t>& profiles, Index& index) {
+  auto it = index.find(profile);
+  if (it != index.end()) {
+    return *it;
+  }
+
+  const auto offset = static_cast<uint32_t>(profiles.size());
+  profiles.insert(profiles.end(), profile.begin(), profile.end());
+  index.emplace(offset);
+  return offset;
 }
 
 } // namespace
@@ -1219,6 +1264,15 @@ void GraphTileBuilder::AddBins(const std::string& tile_dir,
   header.set_edgeinfo_offset(header.edgeinfo_offset() + shift);
   header.set_textlist_offset(header.textlist_offset() + shift);
   header.set_lane_connectivity_offset(header.lane_connectivity_offset() + shift);
+  if (header.predictedspeeds_count() > 0) {
+    header.set_predictedspeeds_offset(header.predictedspeeds_offset() + shift);
+  }
+  if (header.precipitation_offset() != 0) {
+    header.set_precipitation_offset(header.precipitation_offset() + shift);
+  }
+  if (header.wet_road_offset() != 0) {
+    header.set_wet_road_offset(header.wet_road_offset() + shift);
+  }
   header.set_end_offset(header.end_offset() + shift);
   // rewrite the tile
   std::filesystem::path filename{tile_dir};
@@ -1284,10 +1338,85 @@ void GraphTileBuilder::AddPredictedSpeed(const uint32_t idx,
   speed_profile_index_.emplace(new_speed_profile_offset);
 }
 
+void GraphTileBuilder::AddWeatherProfile(
+    const uint32_t idx,
+    const std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek>& precipitation,
+    const std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek>& wet_road) {
+  if (idx >= header_->directededgecount()) {
+    throw std::runtime_error("GraphTileBuilder AddWeatherProfile index is out of bounds");
+  }
+
+  if (precipitation_profile_offset_builder_.empty()) {
+    precipitation_profile_offset_builder_.resize(header_->directededgecount());
+    wet_road_profile_offset_builder_.resize(header_->directededgecount());
+    precipitation_profile_builder_.reserve(256 * GraphTile::kWeatherBucketsPerWeek);
+    wet_road_profile_builder_.reserve(256 * GraphTile::kWeatherBucketsPerWeek);
+    precipitation_profile_index_.reserve(256);
+    wet_road_profile_index_.reserve(256);
+
+    WeatherProfile dry_profile{};
+    precipitation_profile_builder_.insert(precipitation_profile_builder_.end(), dry_profile.begin(),
+                                          dry_profile.end());
+    wet_road_profile_builder_.insert(wet_road_profile_builder_.end(), dry_profile.begin(),
+                                     dry_profile.end());
+    precipitation_profile_index_.emplace(0);
+    wet_road_profile_index_.emplace(0);
+  }
+
+  precipitation_profile_offset_builder_[idx] =
+      add_weather_profile(precipitation, precipitation_profile_builder_,
+                          precipitation_profile_index_);
+  wet_road_profile_offset_builder_[idx] =
+      add_weather_profile(wet_road, wet_road_profile_builder_, wet_road_profile_index_);
+}
+
+void GraphTileBuilder::AddWeatherProfile(const uint32_t idx,
+                                         const std::array<uint16_t, kBucketsPerWeek>& precipitation,
+                                         const std::array<uint16_t, kBucketsPerWeek>& wet_road) {
+  WeatherProfile precipitation_profile{};
+  WeatherProfile wet_road_profile{};
+  constexpr uint32_t source_buckets_per_weather_bucket =
+      GraphTile::kWeatherBucketSizeSeconds / kSpeedBucketSizeSeconds;
+  static_assert(source_buckets_per_weather_bucket * GraphTile::kWeatherBucketsPerWeek ==
+                    kBucketsPerWeek,
+                "Hourly weather bucket stride must exactly cover the 5-minute bucket week");
+  for (uint32_t bucket = 0; bucket < GraphTile::kWeatherBucketsPerWeek; ++bucket) {
+    precipitation_profile[bucket] = static_cast<uint8_t>(
+        std::min<uint16_t>(precipitation[bucket * source_buckets_per_weather_bucket], 255));
+    wet_road_profile[bucket] = static_cast<uint8_t>(
+        std::min<uint16_t>(wet_road[bucket * source_buckets_per_weather_bucket], 255));
+  }
+  AddWeatherProfile(idx, precipitation_profile, wet_road_profile);
+}
+
+void GraphTileBuilder::AddWeatherProfile(const uint32_t idx,
+                                         const std::array<float, kBucketsPerWeek>& precipitation,
+                                         const std::array<float, kBucketsPerWeek>& wet_road) {
+  std::array<uint16_t, kBucketsPerWeek> precipitation_profile;
+  std::array<uint16_t, kBucketsPerWeek> wet_road_profile;
+  for (uint32_t bucket = 0; bucket < kBucketsPerWeek; ++bucket) {
+    precipitation_profile[bucket] =
+        quantize_weather_value(precipitation[bucket], GraphTile::kPrecipitationMax);
+    wet_road_profile[bucket] = quantize_weather_value(wet_road[bucket], GraphTile::kWetRoadMax);
+  }
+  AddWeatherProfile(idx, precipitation_profile, wet_road_profile);
+}
+
+void GraphTileBuilder::AddWeatherProfile(const uint32_t idx, float precipitation, float wet_road) {
+  std::array<float, kBucketsPerWeek> precipitation_profile;
+  std::array<float, kBucketsPerWeek> wet_road_profile;
+  precipitation_profile.fill(precipitation);
+  wet_road_profile.fill(wet_road);
+  AddWeatherProfile(idx, precipitation_profile, wet_road_profile);
+}
+
 // Updates a tile with predictive speed data. Also updates directed edges with
 // free flow and constrained flow speeds and the predicted traffic flag. The
 // predicted traffic is written after turn lane data.
 void GraphTileBuilder::UpdatePredictedSpeeds(const std::vector<DirectedEdge>& directededges) {
+
+  // Rebase from the current on-disk header so any existing expansion offsets remain intact.
+  header_builder_ = *header_;
 
   // Even if there are no predicted speeds there still may be updated directed edges
   // with free flow or constrained flow speeds - so don't return if no speed profiles
@@ -1344,6 +1473,79 @@ void GraphTileBuilder::UpdatePredictedSpeeds(const std::vector<DirectedEdge>& di
     // Close the file
     file.close();
   }
+}
+
+void GraphTileBuilder::UpdateWeatherProfiles() {
+  if (precipitation_profile_offset_builder_.empty()) {
+    return;
+  }
+
+  // Rebase from the current on-disk header so all existing offsets/counts stay intact.
+  header_builder_ = *header_;
+
+  std::filesystem::path filename{tile_dir_};
+  filename.append(GraphTile::FileSuffix(header_builder_.graphid()));
+
+  if (!std::filesystem::exists(filename.parent_path())) {
+    std::filesystem::create_directories(filename.parent_path());
+  }
+
+  std::ofstream file(filename.c_str(), std::ios::out | std::ios::binary | std::ios::trunc);
+  if (!file.is_open()) {
+    throw std::runtime_error("Failed to open file " + filename.string());
+  }
+
+  const uint32_t weather_block_size =
+      (precipitation_profile_offset_builder_.size() + wet_road_profile_offset_builder_.size()) *
+          sizeof(uint32_t) +
+      precipitation_profile_builder_.size() + wet_road_profile_builder_.size();
+  const bool had_weather = header_->precipitation_offset() != 0;
+  uint32_t base_offset = had_weather ? header_->precipitation_offset() : header_->end_offset();
+  if (!had_weather && header_->predictedspeeds_count() > 0) {
+    base_offset = header_->predictedspeeds_offset();
+  }
+  const uint32_t old_weather_end = had_weather ? old_weather_end_offset(header_) : base_offset;
+  const uint32_t precipitation_offset = base_offset;
+  const uint32_t wet_road_offset =
+      precipitation_offset + precipitation_profile_offset_builder_.size() * sizeof(uint32_t);
+  const uint32_t tail_size = header_->end_offset() - old_weather_end;
+  const int64_t shift =
+      static_cast<int64_t>(weather_block_size) - static_cast<int64_t>(old_weather_end - base_offset);
+
+  header_builder_.set_precipitation_offset(precipitation_offset);
+  header_builder_.set_wet_road_offset(wet_road_offset);
+  header_builder_.set_end_offset(base_offset + weather_block_size + tail_size);
+  if (header_builder_.predictedspeeds_count() > 0 &&
+      header_builder_.predictedspeeds_offset() >= base_offset) {
+    header_builder_.set_predictedspeeds_offset(static_cast<uint32_t>(
+        static_cast<int64_t>(header_builder_.predictedspeeds_offset()) + shift));
+  }
+
+  file.write(reinterpret_cast<const char*>(&header_builder_), sizeof(GraphTileHeader));
+
+  auto begin = reinterpret_cast<const char*>(header()) + sizeof(GraphTileHeader);
+  auto end = reinterpret_cast<const char*>(header()) + base_offset;
+  file.write(begin, end - begin);
+
+  file.write(reinterpret_cast<const char*>(precipitation_profile_offset_builder_.data()),
+             precipitation_profile_offset_builder_.size() *
+                 sizeof(decltype(precipitation_profile_offset_builder_)::value_type));
+  file.write(reinterpret_cast<const char*>(wet_road_profile_offset_builder_.data()),
+             wet_road_profile_offset_builder_.size() *
+                 sizeof(decltype(wet_road_profile_offset_builder_)::value_type));
+  file.write(reinterpret_cast<const char*>(precipitation_profile_builder_.data()),
+             precipitation_profile_builder_.size() *
+                 sizeof(decltype(precipitation_profile_builder_)::value_type));
+  file.write(reinterpret_cast<const char*>(wet_road_profile_builder_.data()),
+             wet_road_profile_builder_.size() *
+                 sizeof(decltype(wet_road_profile_builder_)::value_type));
+
+  if (tail_size > 0) {
+    auto tail_begin = reinterpret_cast<const char*>(header()) + old_weather_end;
+    file.write(tail_begin, tail_size);
+  }
+
+  file.close();
 }
 
 void GraphTileBuilder::AddLandmark(const GraphId& edge_id, const Landmark& landmark) {

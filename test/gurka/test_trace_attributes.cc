@@ -455,6 +455,394 @@ TEST(Standalone, BeginShapeIndexAtDiscontinuity) {
   EXPECT_GT(bc_match.Distance(fg_match), 1000.0) << "Discontinuity is big enough";
 }
 
+TEST(Standalone, WeatherSignalsDefaultToZero) {
+  const std::string ascii_map = R"(
+    A---B---C
+  )";
+
+  const gurka::ways ways = {{"AB", {{"highway", "primary"}}},
+                            {"BC", {{"highway", "primary"}}}};
+
+  const double gridsize = 10;
+  const auto layout = gurka::detail::map_to_coordinates(ascii_map, gridsize);
+  auto map = gurka::buildtiles(layout, ways, {}, {}, "test/data/weather_trace_attributes_defaults");
+
+  std::string trace_json;
+  [[maybe_unused]] auto api = gurka::do_action(valhalla::Options::trace_attributes, map,
+                                               {"A", "B", "C"}, "auto", {}, {}, &trace_json,
+                                               "via");
+
+  rapidjson::Document result;
+  result.Parse(trace_json.c_str());
+
+  auto edges = result["edges"].GetArray();
+  ASSERT_EQ(edges.Size(), 2);
+  for (rapidjson::SizeType i = 0; i < edges.Size(); ++i) {
+    ASSERT_TRUE(edges[i].HasMember("precipitation"));
+    EXPECT_DOUBLE_EQ(edges[i]["precipitation"].GetDouble(), 0.0);
+    ASSERT_TRUE(edges[i].HasMember("wet_road"));
+    EXPECT_DOUBLE_EQ(edges[i]["wet_road"].GetDouble(), 0.0);
+  }
+}
+
+TEST(Standalone, WeatherSignalsPbfOut) {
+  const std::string ascii_map = R"(
+      1     2
+    A----B------C
+  )";
+
+  const gurka::ways ways = {{"AB", {{"highway", "primary"}}},
+                            {"BC", {{"highway", "primary"}}}};
+
+  const double gridsize = 10;
+  const auto layout = gurka::detail::map_to_coordinates(ascii_map, gridsize);
+  auto map = gurka::buildtiles(layout, ways, {}, {}, "test/data/weather_trace_attributes_pbf");
+
+  std::string trace_result;
+  [[maybe_unused]] auto api = gurka::do_action(valhalla::Options::trace_attributes, map,
+                                               {"1", "2"}, "auto", {{"/format", "pbf"}}, {},
+                                               &trace_result);
+
+  Api initial_response;
+  ASSERT_TRUE(initial_response.ParseFromString(trace_result));
+  ASSERT_TRUE(initial_response.has_trip());
+  ASSERT_EQ(initial_response.trip().routes_size(), 1);
+  ASSERT_EQ(initial_response.trip().routes(0).legs_size(), 1);
+
+  const auto& initial_leg = initial_response.trip().routes(0).legs(0);
+  ASSERT_EQ(initial_leg.node_size(), 3);
+  ASSERT_TRUE(initial_leg.node(0).has_edge());
+  ASSERT_TRUE(initial_leg.node(1).has_edge());
+
+  const auto first_edge_id = initial_leg.node(0).edge().id();
+  const auto second_edge_id = initial_leg.node(1).edge().id();
+
+  // Test values must stay within the per-signal caps (precipitation 5.0,
+  // wet_road 0.5) or lookup saturates. The quantized round-trip is lossy to
+  // within one uint8 step (precip ~0.02, wet_road ~0.002), so assertions use
+  // EXPECT_NEAR rather than EXPECT_FLOAT_EQ.
+  test::customize_weather_profiles(
+      map.config, [&](const baldr::GraphId& edge_id, baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
+        if (edge_id.value == first_edge_id) {
+          return test::EdgeWeather{1.5f, 0.25f};
+        }
+        if (edge_id.value == second_edge_id) {
+          return test::EdgeWeather{3.25f, 0.4f};
+        }
+        return std::nullopt;
+      });
+
+  auto reader = test::make_clean_graphreader(map.config.get_child("mjolnir"));
+  std::vector<float> precipitation_values;
+  std::vector<float> wet_road_values;
+  for (const auto& tile_id : reader->GetTileSet()) {
+    auto tile = reader->GetGraphTile(tile_id);
+    for (uint32_t i = 0; i < tile->header()->directededgecount(); ++i) {
+      const auto* edge = tile->directededge(i);
+      if (!edge->forward()) {
+        continue;
+      }
+      precipitation_values.push_back(tile->precipitation(edge));
+      wet_road_values.push_back(tile->wet_road(edge));
+    }
+  }
+  auto near = [](float expected, float tolerance) {
+    return ::testing::Truly([expected, tolerance](float v) {
+      return std::fabs(v - expected) <= tolerance;
+    });
+  };
+  EXPECT_THAT(precipitation_values, ::testing::Contains(near(1.5f, 0.02f)));
+  EXPECT_THAT(precipitation_values, ::testing::Contains(near(3.25f, 0.02f)));
+  EXPECT_THAT(wet_road_values, ::testing::Contains(near(0.25f, 0.01f)));
+  EXPECT_THAT(wet_road_values, ::testing::Contains(near(0.4f, 0.01f)));
+
+  api = gurka::do_action(valhalla::Options::trace_attributes, map, {"1", "2"}, "auto",
+                         {{"/format", "pbf"}}, {}, &trace_result);
+
+  Api response;
+  ASSERT_TRUE(response.ParseFromString(trace_result));
+  ASSERT_TRUE(response.has_trip());
+  ASSERT_EQ(response.trip().routes_size(), 1);
+  ASSERT_EQ(response.trip().routes(0).legs_size(), 1);
+
+  const auto& leg = response.trip().routes(0).legs(0);
+  ASSERT_EQ(leg.node_size(), 3);
+
+  ASSERT_TRUE(leg.node(0).has_edge());
+  EXPECT_NEAR(leg.node(0).edge().precipitation(), 1.5f, 0.02f);
+  EXPECT_NEAR(leg.node(0).edge().wet_road(), 0.25f, 0.01f);
+
+  ASSERT_TRUE(leg.node(1).has_edge());
+  EXPECT_NEAR(leg.node(1).edge().precipitation(), 3.25f, 0.02f);
+  EXPECT_NEAR(leg.node(1).edge().wet_road(), 0.4f, 0.01f);
+}
+
+TEST(Standalone, WeatherSignalsRewritePreservesPredictedSpeeds) {
+  const std::string ascii_map = R"(
+    A---B---C
+  )";
+
+  const gurka::ways ways = {{"AB", {{"highway", "primary"}}},
+                            {"BC", {{"highway", "primary"}}}};
+
+  const double gridsize = 2500;
+  const auto layout = gurka::detail::map_to_coordinates(ascii_map, gridsize);
+  auto map = gurka::buildtiles(layout, ways, {}, {},
+                               "test/data/weather_trace_attributes_with_predicted_speeds");
+
+  std::string trace_result;
+  [[maybe_unused]] auto api = gurka::do_action(valhalla::Options::trace_attributes, map,
+                                               {"A", "B", "C"}, "auto",
+                                               {{"/shape_match", "edge_walk"},
+                                                {"/trace_options/breakage_distance", "10000"}},
+                                               {}, &trace_result, "via");
+
+  rapidjson::Document initial_result;
+  initial_result.Parse(trace_result.c_str());
+  ASSERT_FALSE(initial_result.HasParseError());
+
+  auto initial_edges = initial_result["edges"].GetArray();
+  ASSERT_EQ(initial_edges.Size(), 2);
+  const auto first_edge_id = initial_edges[0]["id"].GetUint64();
+  const auto second_edge_id = initial_edges[1]["id"].GetUint64();
+
+  test::customize_weather_profiles(
+      map.config, [&](const baldr::GraphId& edge_id, baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
+        if (edge_id.value == first_edge_id) {
+          return test::EdgeWeather{1.0f, 0.1f};
+        }
+        if (edge_id.value == second_edge_id) {
+          return test::EdgeWeather{2.0f, 0.2f};
+        }
+        return std::nullopt;
+      });
+
+  test::customize_historical_traffic(map.config, [&](baldr::DirectedEdge& e) {
+    e.set_constrained_flow_speed(40);
+    e.set_free_flow_speed(100);
+
+    std::array<float, baldr::kBucketsPerWeek> historical;
+    historical.fill(e.forward() ? 25.0f : 35.0f);
+    return historical;
+  });
+
+  // wet_road values must stay within the 0.5 cap to avoid quantization
+  // saturation; precipitation tolerance accounts for the 5/255 uint8 step.
+  test::customize_weather_profiles(
+      map.config, [&](const baldr::GraphId& edge_id, baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
+        if (edge_id.value == first_edge_id) {
+          return test::EdgeWeather{1.5f, 0.25f};
+        }
+        if (edge_id.value == second_edge_id) {
+          return test::EdgeWeather{3.25f, 0.4f};
+        }
+        return std::nullopt;
+      });
+
+  api = gurka::do_action(valhalla::Options::trace_attributes, map, {"A", "B", "C"}, "auto",
+                         {{"/shape_match", "edge_walk"},
+                          {"/date_time/type", "1"},
+                          {"/date_time/value", "2025-06-27T08:00"},
+                          {"/trace_options/breakage_distance", "10000"}},
+                         {}, &trace_result, "via");
+
+  rapidjson::Document result;
+  result.Parse(trace_result.c_str());
+  ASSERT_FALSE(result.HasParseError());
+
+  auto edges = result["edges"].GetArray();
+  ASSERT_EQ(edges.Size(), 2);
+
+  EXPECT_NEAR(edges[0]["precipitation"].GetFloat(), 1.5f, 0.02f);
+  EXPECT_NEAR(edges[0]["wet_road"].GetFloat(), 0.25f, 0.01f);
+  EXPECT_NEAR(edges[1]["precipitation"].GetFloat(), 3.25f, 0.02f);
+  EXPECT_NEAR(edges[1]["wet_road"].GetFloat(), 0.4f, 0.01f);
+
+  EXPECT_TRUE(edges[0]["speeds_non_faded"].HasMember("predicted_flow"));
+  EXPECT_TRUE(edges[1]["speeds_non_faded"].HasMember("predicted_flow"));
+  EXPECT_NEAR(edges[0]["speeds_non_faded"]["predicted_flow"].GetFloat(), 25.0f, 1.0f);
+  EXPECT_NEAR(edges[1]["speeds_non_faded"]["predicted_flow"].GetFloat(), 25.0f, 1.0f);
+}
+
+TEST(Standalone, WeatherSignalsFollowRouteTime) {
+  const std::string ascii_map = R"(
+    A---B---C
+  )";
+
+  const gurka::ways ways = {{"AB", {{"highway", "primary"}}},
+                            {"BC", {{"highway", "primary"}}}};
+
+  const double gridsize = 2500;
+  const auto layout = gurka::detail::map_to_coordinates(ascii_map, gridsize);
+  auto map = gurka::buildtiles(layout, ways, {}, {}, "test/data/weather_trace_attributes_route_time");
+
+  std::string trace_result;
+  [[maybe_unused]] auto api = gurka::do_action(valhalla::Options::trace_attributes, map,
+                                               {"A", "B", "C"}, "auto",
+                                               {{"/shape_match", "edge_walk"},
+                                                {"/trace_options/breakage_distance", "10000"}},
+                                               {}, &trace_result, "via");
+
+  rapidjson::Document initial_result;
+  initial_result.Parse(trace_result.c_str());
+  ASSERT_FALSE(initial_result.HasParseError());
+
+  auto initial_edges = initial_result["edges"].GetArray();
+  ASSERT_EQ(initial_edges.Size(), 2);
+  const auto first_edge_id = initial_edges[0]["id"].GetUint64();
+  const auto second_edge_id = initial_edges[1]["id"].GetUint64();
+
+  test::customize_weather_profile_buckets(
+      map.config, [&](const baldr::GraphId& edge_id,
+                      baldr::DirectedEdge&) -> std::optional<test::EdgeWeatherProfile> {
+        test::EdgeWeatherProfile profile{};
+        profile.precipitation.fill(0.f);
+        profile.wet_road.fill(0.f);
+
+        auto fill_hour = [&](uint32_t start_bucket, float precipitation, float wet_road) {
+          for (uint32_t bucket = start_bucket; bucket < start_bucket + 12; ++bucket) {
+            profile.precipitation[bucket] = precipitation;
+            profile.wet_road[bucket] = wet_road;
+          }
+        };
+
+        // Wet-road values stay within the 0.5 cap so dequantization does not
+        // saturate; precipitation values are well under the 5.0 cap.
+        if (edge_id.value == first_edge_id) {
+          fill_hour(96, 1.5f, 0.25f);
+          fill_hour(108, 3.25f, 0.4f);
+          return profile;
+        }
+
+        if (edge_id.value == second_edge_id) {
+          fill_hour(96, 2.0f, 0.3f);
+          fill_hour(108, 4.0f, 0.45f);
+          return profile;
+        }
+
+        return std::nullopt;
+      });
+
+  api = gurka::do_action(valhalla::Options::trace_attributes, map, {"A", "B", "C"}, "auto",
+                         {{"/shape_match", "edge_walk"},
+                          {"/date_time/type", "1"},
+                          {"/date_time/value", "2025-06-22T08:00"},
+                          {"/trace_options/breakage_distance", "10000"}},
+                         {}, &trace_result, "via");
+
+  rapidjson::Document morning_result;
+  morning_result.Parse(trace_result.c_str());
+  ASSERT_FALSE(morning_result.HasParseError());
+
+  auto morning_edges = morning_result["edges"].GetArray();
+  ASSERT_EQ(morning_edges.Size(), 2);
+  EXPECT_NEAR(morning_edges[0]["precipitation"].GetFloat(), 1.5f, 0.02f);
+  EXPECT_NEAR(morning_edges[0]["wet_road"].GetFloat(), 0.25f, 0.01f);
+  EXPECT_NEAR(morning_edges[1]["precipitation"].GetFloat(), 2.0f, 0.02f);
+  EXPECT_NEAR(morning_edges[1]["wet_road"].GetFloat(), 0.3f, 0.01f);
+
+  api = gurka::do_action(valhalla::Options::trace_attributes, map, {"A", "B", "C"}, "auto",
+                         {{"/shape_match", "edge_walk"},
+                          {"/date_time/type", "1"},
+                          {"/date_time/value", "2025-06-22T09:00"},
+                          {"/trace_options/breakage_distance", "10000"}},
+                         {}, &trace_result, "via");
+
+  rapidjson::Document later_result;
+  later_result.Parse(trace_result.c_str());
+  ASSERT_FALSE(later_result.HasParseError());
+
+  auto later_edges = later_result["edges"].GetArray();
+  ASSERT_EQ(later_edges.Size(), 2);
+  EXPECT_NEAR(later_edges[0]["precipitation"].GetFloat(), 3.25f, 0.02f);
+  EXPECT_NEAR(later_edges[0]["wet_road"].GetFloat(), 0.4f, 0.01f);
+  EXPECT_NEAR(later_edges[1]["precipitation"].GetFloat(), 4.0f, 0.02f);
+  EXPECT_NEAR(later_edges[1]["wet_road"].GetFloat(), 0.45f, 0.01f);
+}
+
+TEST(Standalone, WeatherSignalsRespectTraceAttributeFilters) {
+  const std::string ascii_map = R"(
+    A---B---C
+  )";
+
+  const gurka::ways ways = {{"AB", {{"highway", "primary"}}},
+                            {"BC", {{"highway", "primary"}}}};
+
+  const double gridsize = 2500;
+  const auto layout = gurka::detail::map_to_coordinates(ascii_map, gridsize);
+  auto map = gurka::buildtiles(layout, ways, {}, {},
+                               "test/data/weather_trace_attributes_filters");
+
+  std::string trace_result;
+  [[maybe_unused]] auto api = gurka::do_action(valhalla::Options::trace_attributes, map,
+                                               {"A", "B", "C"}, "auto",
+                                               {{"/shape_match", "edge_walk"},
+                                                {"/trace_options/breakage_distance", "10000"}},
+                                               {}, &trace_result, "via");
+
+  rapidjson::Document initial_result;
+  initial_result.Parse(trace_result.c_str());
+  ASSERT_FALSE(initial_result.HasParseError());
+
+  auto initial_edges = initial_result["edges"].GetArray();
+  ASSERT_EQ(initial_edges.Size(), 2);
+  const auto first_edge_id = initial_edges[0]["id"].GetUint64();
+
+  test::customize_weather_profiles(
+      map.config, [&](const baldr::GraphId& edge_id,
+                      baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
+        if (edge_id.value == first_edge_id) {
+          return test::EdgeWeather{1.5f, 0.25f};
+        }
+        return std::nullopt;
+      });
+
+  api = gurka::do_action(valhalla::Options::trace_attributes, map, {"A", "B", "C"}, "auto",
+                         {{"/shape_match", "edge_walk"},
+                          {"/trace_options/breakage_distance", "10000"}},
+                         {}, &trace_result, "via");
+
+  rapidjson::Document default_result;
+  default_result.Parse(trace_result.c_str());
+  ASSERT_FALSE(default_result.HasParseError());
+  auto default_edges = default_result["edges"].GetArray();
+  ASSERT_EQ(default_edges.Size(), 2);
+  EXPECT_TRUE(default_edges[0].HasMember("precipitation"));
+  EXPECT_TRUE(default_edges[0].HasMember("wet_road"));
+
+  api = gurka::do_action(valhalla::Options::trace_attributes, map, {"A", "B", "C"}, "auto",
+                         {{"/shape_match", "edge_walk"},
+                          {"/trace_options/breakage_distance", "10000"},
+                          {"/filters/action", "exclude"},
+                          {"/filters/attributes/0", "edge.precipitation"},
+                          {"/filters/attributes/1", "edge.wet_road"}},
+                         {}, &trace_result, "via");
+
+  rapidjson::Document exclude_result;
+  exclude_result.Parse(trace_result.c_str());
+  ASSERT_FALSE(exclude_result.HasParseError());
+  auto exclude_edges = exclude_result["edges"].GetArray();
+  ASSERT_EQ(exclude_edges.Size(), 2);
+  EXPECT_FALSE(exclude_edges[0].HasMember("precipitation"));
+  EXPECT_FALSE(exclude_edges[0].HasMember("wet_road"));
+
+  api = gurka::do_action(valhalla::Options::trace_attributes, map, {"A", "B", "C"}, "auto",
+                         {{"/shape_match", "edge_walk"},
+                          {"/trace_options/breakage_distance", "10000"},
+                          {"/filters/action", "include"},
+                          {"/filters/attributes/0", "edge.length"}},
+                         {}, &trace_result, "via");
+
+  rapidjson::Document include_result;
+  include_result.Parse(trace_result.c_str());
+  ASSERT_FALSE(include_result.HasParseError());
+  auto include_edges = include_result["edges"].GetArray();
+  ASSERT_EQ(include_edges.Size(), 2);
+  EXPECT_TRUE(include_edges[0].HasMember("length"));
+  EXPECT_FALSE(include_edges[0].HasMember("precipitation"));
+  EXPECT_FALSE(include_edges[0].HasMember("wet_road"));
+}
+
 TEST(Standalone, PbfOut) {
   const std::string ascii_map = R"(
       1     2

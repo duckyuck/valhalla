@@ -300,6 +300,7 @@ set(valhalla_programs
 set(valhalla_data_tools valhalla_build_statistics valhalla_ways_to_edges valhalla_validate_transit
   valhalla_benchmark_admins valhalla_build_connectivity	valhalla_build_tiles valhalla_build_admins
   valhalla_convert_transit valhalla_ingest_transit valhalla_query_transit valhalla_add_predicted_traffic
+  valhalla_add_weather_profiles
   valhalla_assign_speeds valhalla_add_elevation valhalla_build_landmarks valhalla_add_landmarks)
 
 ## Valhalla services

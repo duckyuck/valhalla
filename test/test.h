@@ -122,8 +122,33 @@ void customize_live_traffic_data(const boost::property_tree::ptree& config,
 using HistoricalTrafficCustomize =
     std::function<std::optional<std::array<float, valhalla::baldr::kBucketsPerWeek>>(
         valhalla::baldr::DirectedEdge&)>;
+
+struct EdgeWeather {
+  float precipitation;
+  float wet_road;
+};
+
+struct EdgeWeatherProfile {
+  std::array<float, valhalla::baldr::kBucketsPerWeek> precipitation;
+  std::array<float, valhalla::baldr::kBucketsPerWeek> wet_road;
+};
+
+using WeatherCustomize =
+    std::function<std::optional<EdgeWeather>(const valhalla::baldr::GraphId&,
+                                             valhalla::baldr::DirectedEdge&)>;
+
 void customize_historical_traffic(const boost::property_tree::ptree& config,
                                   const HistoricalTrafficCustomize& cb);
+
+void customize_weather_profiles(const boost::property_tree::ptree& config,
+                                const WeatherCustomize& cb);
+
+using WeatherProfileCustomize =
+    std::function<std::optional<EdgeWeatherProfile>(const valhalla::baldr::GraphId&,
+                                                    valhalla::baldr::DirectedEdge&)>;
+
+void customize_weather_profile_buckets(const boost::property_tree::ptree& config,
+                                       const WeatherProfileCustomize& cb);
 
 using EdgesCustomize =
     std::function<void(const valhalla::baldr::GraphId&, valhalla::baldr::DirectedEdge&)>;

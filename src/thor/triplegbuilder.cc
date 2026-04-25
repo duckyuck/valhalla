@@ -1427,6 +1427,14 @@ TripLeg_Edge* AddTripEdge(const AttributesController& controller,
     trip_edge->set_curvature(directededge->curvature());
   }
 
+  if (controller(kEdgePrecipitation)) {
+    trip_edge->set_precipitation(graphtile->precipitation(idx, time_info.second_of_week));
+  }
+
+  if (controller(kEdgeWetRoad)) {
+    trip_edge->set_wet_road(graphtile->wet_road(idx, time_info.second_of_week));
+  }
+
   if (directededge->destonly() && controller(kEdgeDestinationOnly)) {
     trip_edge->set_destination_only(directededge->destonly());
   }

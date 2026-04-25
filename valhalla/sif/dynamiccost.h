@@ -1478,8 +1478,11 @@ protected:
     // Speed penalty factor to use for edges that are faster than the top speed
     speed_penalty_factor_ = costing_options.speed_penalty_factor();
 
-    // Set the speed mask to determine which speed data types are allowed
-    flow_mask_ = costing_options.flow_mask();
+    // Set the speed mask to determine which speed data types are allowed.
+    // If flow_mask is absent, this request omitted speed_types and should use
+    // the implicit runtime default.
+    flow_mask_ = costing_options.has_flow_mask_case() ? costing_options.flow_mask()
+                                                      : baldr::kDefaultFlowMask;
     // Set the fixed speed a vehicle can go
     fixed_speed_ = costing_options.fixed_speed();
     // Set the top speed a vehicle wants to go

@@ -498,6 +498,21 @@ public:
                          const std::array<int16_t, baldr::kCoefficientCount>& coefficients,
                          const size_t predicted_count_hint = 256);
 
+  void AddWeatherProfile(const uint32_t idx,
+                         const std::array<float, baldr::kBucketsPerWeek>& precipitation,
+                         const std::array<float, baldr::kBucketsPerWeek>& wet_road);
+
+  void AddWeatherProfile(const uint32_t idx,
+                         const std::array<uint16_t, baldr::kBucketsPerWeek>& precipitation,
+                         const std::array<uint16_t, baldr::kBucketsPerWeek>& wet_road);
+
+  void AddWeatherProfile(
+      const uint32_t idx,
+      const std::array<uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>& precipitation,
+      const std::array<uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>& wet_road);
+
+  void AddWeatherProfile(const uint32_t idx, float precipitation, float wet_road);
+
   /**
    * Updates a tile with predictive speed data. Also updates directed edges with
    * free flow and constrained flow speeds and the predicted traffic flag. The
@@ -505,6 +520,8 @@ public:
    * @param  directededges  Updated directed edge information.
    */
   void UpdatePredictedSpeeds(const std::vector<baldr::DirectedEdge>& directededges);
+
+  void UpdateWeatherProfiles();
 
   /**
    * Adds a landmark to the given edge id by modifying its edgeinfo to add a name and tagged value
@@ -576,6 +593,57 @@ protected:
 
     static std::span<const int16_t, baldr::kCoefficientCount>
     to_profile(const std::array<int16_t, baldr::kCoefficientCount>& arr) {
+      return arr;
+    }
+
+    template <typename L, typename R> bool operator()(const L& a, const R& b) const {
+      return std::ranges::equal(to_profile(a), to_profile(b));
+    }
+  };
+
+  struct WeatherProfileIndexHasher {
+    WeatherProfileIndexHasher(const std::vector<uint8_t>& profiles) : profiles_(profiles) {
+    }
+    using is_transparent = void;
+    const std::vector<uint8_t>& profiles_;
+
+    std::span<const uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>
+    to_profile(uint32_t offset) const {
+      return std::span<
+          const uint8_t,
+          baldr::GraphTile::kWeatherBucketsPerWeek>{profiles_.data() + offset,
+                                                    baldr::GraphTile::kWeatherBucketsPerWeek};
+    }
+
+    static std::span<const uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>
+    to_profile(const std::array<uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>& arr) {
+      return arr;
+    }
+
+    template <typename T> std::size_t operator()(const T& key) const {
+      auto profile = to_profile(key);
+      std::size_t seed = 13;
+      boost::hash_range(seed, profile.begin(), profile.end());
+      return seed;
+    }
+  };
+
+  struct WeatherProfileIndexEqual {
+    WeatherProfileIndexEqual(const std::vector<uint8_t>& profiles) : profiles_(profiles) {
+    }
+    using is_transparent = void;
+    const std::vector<uint8_t>& profiles_;
+
+    std::span<const uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>
+    to_profile(uint32_t offset) const {
+      return std::span<
+          const uint8_t,
+          baldr::GraphTile::kWeatherBucketsPerWeek>{profiles_.data() + offset,
+                                                    baldr::GraphTile::kWeatherBucketsPerWeek};
+    }
+
+    static std::span<const uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>
+    to_profile(const std::array<uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>& arr) {
       return arr;
     }
 
@@ -687,6 +755,17 @@ protected:
 
   // lane connectivity list offset
   uint32_t lane_connectivity_offset_ = 0;
+
+  std::vector<uint32_t> precipitation_profile_offset_builder_;
+  std::vector<uint32_t> wet_road_profile_offset_builder_;
+  std::vector<uint8_t> precipitation_profile_builder_;
+  std::vector<uint8_t> wet_road_profile_builder_;
+  std::unordered_set<uint32_t, WeatherProfileIndexHasher, WeatherProfileIndexEqual>
+      precipitation_profile_index_{0, WeatherProfileIndexHasher(precipitation_profile_builder_),
+                                   WeatherProfileIndexEqual(precipitation_profile_builder_)};
+  std::unordered_set<uint32_t, WeatherProfileIndexHasher, WeatherProfileIndexEqual>
+      wet_road_profile_index_{0, WeatherProfileIndexHasher(wet_road_profile_builder_),
+                              WeatherProfileIndexEqual(wet_road_profile_builder_)};
 };
 
 #ifdef ENABLE_THREAD_SAFE_TILE_REF_COUNT

@@ -30,6 +30,10 @@ std::string thor_worker_t::trace_attributes(Api& request) {
   parse_measurements(request);
   const Options options = request.options(); // copy `options` to have them as a backup for a fallback
   controller = AttributesController(options, true);
+  if (options.filter_action() == FilterAction::no_action) {
+    controller.set(kEdgePrecipitation, true);
+    controller.set(kEdgeWetRoad, true);
+  }
 
   /*
    * A flag indicating whether the input shape is a GPS trace or exact points from a

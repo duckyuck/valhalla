@@ -688,6 +688,50 @@ void customize_historical_traffic(const boost::property_tree::ptree& config,
   }
 }
 
+void customize_weather_profiles(const boost::property_tree::ptree& config,
+                                const WeatherCustomize& cb) {
+  valhalla::baldr::GraphReader reader(config.get_child("mjolnir"));
+  auto tile_dir = config.get<std::string>("mjolnir.tile_dir");
+  for (const auto& tile_id : reader.GetTileSet()) {
+    valhalla::mjolnir::GraphTileBuilder tile(tile_dir, tile_id, false);
+    valhalla::baldr::GraphId edgeid = tile_id;
+    bool updated = false;
+    for (size_t j = 0; j < tile.header()->directededgecount(); ++j, ++edgeid) {
+      auto weather = cb(edgeid, tile.directededge(j));
+      if (!weather) {
+        continue;
+      }
+      tile.AddWeatherProfile(j, weather->precipitation, weather->wet_road);
+      updated = true;
+    }
+    if (updated) {
+      tile.UpdateWeatherProfiles();
+    }
+  }
+}
+
+void customize_weather_profile_buckets(const boost::property_tree::ptree& config,
+                                       const WeatherProfileCustomize& cb) {
+  valhalla::baldr::GraphReader reader(config.get_child("mjolnir"));
+  auto tile_dir = config.get<std::string>("mjolnir.tile_dir");
+  for (const auto& tile_id : reader.GetTileSet()) {
+    valhalla::mjolnir::GraphTileBuilder tile(tile_dir, tile_id, false);
+    valhalla::baldr::GraphId edgeid = tile_id;
+    bool updated = false;
+    for (size_t j = 0; j < tile.header()->directededgecount(); ++j, ++edgeid) {
+      auto weather = cb(edgeid, tile.directededge(j));
+      if (!weather) {
+        continue;
+      }
+      tile.AddWeatherProfile(j, weather->precipitation, weather->wet_road);
+      updated = true;
+    }
+    if (updated) {
+      tile.UpdateWeatherProfiles();
+    }
+  }
+}
+
 void customize_edges(const boost::property_tree::ptree& config, const EdgesCustomize& setter_cb) {
   // loop over all tiles in the tileset
   valhalla::baldr::GraphReader reader(config.get_child("mjolnir"));

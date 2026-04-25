@@ -175,6 +175,12 @@ void serialize_edges(const AttributesController& controller,
       if (controller(kEdgeCurvature)) {
         writer("curvature", static_cast<uint64_t>(edge.curvature()));
       }
+      if (controller(kEdgePrecipitation)) {
+        writer("precipitation", edge.precipitation());
+      }
+      if (controller(kEdgeWetRoad)) {
+        writer("wet_road", edge.wet_road());
+      }
       if (controller(kEdgeDriveOnRight)) {
         writer("drive_on_right", static_cast<bool>(!edge.drive_on_left()));
       }

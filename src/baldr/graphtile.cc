@@ -11,6 +11,7 @@
 #include "midgard/tiles.h"
 #include "midgard/util.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -407,7 +408,18 @@ void GraphTile::Initialize(const GraphId& graphid) {
   // Start of lane connections and their size
   lane_connectivity_ =
       reinterpret_cast<LaneConnectivity*>(tile_ptr + header_->lane_connectivity_offset());
-  lane_connectivity_size_ = header_->predictedspeeds_offset() - header_->lane_connectivity_offset();
+
+  auto next_offset = header_->end_offset();
+  if (header_->predictedspeeds_count() > 0) {
+    next_offset = std::min(next_offset, header_->predictedspeeds_offset());
+  }
+  if (header_->precipitation_offset() != 0) {
+    next_offset = std::min(next_offset, header_->precipitation_offset());
+  }
+  if (header_->wet_road_offset() != 0) {
+    next_offset = std::min(next_offset, header_->wet_road_offset());
+  }
+  lane_connectivity_size_ = next_offset - header_->lane_connectivity_offset();
 
   // Start of predicted speed data.
   if (header_->predictedspeeds_count() > 0) {
@@ -415,10 +427,24 @@ void GraphTile::Initialize(const GraphId& graphid) {
     char* ptr2 = ptr1 + (header_->directededgecount() * sizeof(int32_t));
     predictedspeeds_.set_offset(reinterpret_cast<uint32_t*>(ptr1));
     predictedspeeds_.set_profiles(reinterpret_cast<int16_t*>(ptr2));
+  }
 
-    lane_connectivity_size_ = header_->predictedspeeds_offset() - header_->lane_connectivity_offset();
-  } else {
-    lane_connectivity_size_ = header_->end_offset() - header_->lane_connectivity_offset();
+  // Weather offsets are written as a pair. Treating one half as present while
+  // the other is missing would silently lose data, so require both.
+  const bool has_precipitation = header_->precipitation_offset() != 0;
+  const bool has_wet_road = header_->wet_road_offset() != 0;
+  if (has_precipitation != has_wet_road) {
+    LOG_WARN("GraphTile has asymmetric weather offsets; ignoring weather profiles");
+  } else if (has_precipitation && has_wet_road) {
+    precipitation_profile_offsets_ =
+        reinterpret_cast<const uint32_t*>(tile_ptr + header_->precipitation_offset());
+    wet_road_profile_offsets_ =
+        reinterpret_cast<const uint32_t*>(tile_ptr + header_->wet_road_offset());
+    precipitation_profiles_ = reinterpret_cast<const uint8_t*>(
+        tile_ptr + header_->wet_road_offset() + header_->directededgecount() * sizeof(uint32_t));
+    wet_road_profiles_ =
+        precipitation_profiles_ +
+        CompactWeatherTableSize(precipitation_profile_offsets_, header_->directededgecount());
   }
 
   // For reference - how to use the end offset to set size of an object (that

@@ -360,6 +360,12 @@ message Costing {
     oneof has_use_twisty_roads {
       float use_twisty_roads = 97;
     }
+    oneof has_avoid_precipitation {
+      float avoid_precipitation = 98;
+    }
+    oneof has_avoid_wet_roads {
+      float avoid_wet_roads = 99;
+    }
   }
 
   oneof has_options {

@@ -103,6 +103,8 @@ constexpr std::string_view kEdgeLayer = "edge.layer";
 constexpr std::string_view kEdgeShortcut = "edge.is_shortcut";
 constexpr std::string_view kEdgeLeavesTile = "edge.leaves_tile";
 constexpr std::string_view kEdgeCurvature = "edge.curvature";
+constexpr std::string_view kEdgePrecipitation = "edge.precipitation";
+constexpr std::string_view kEdgeWetRoad = "edge.wet_road";
 
 // direction-dependent keys (mostly used by MVT)
 constexpr std::string_view kEdgeSpeedFwd = "edge.speed_forward";
@@ -257,6 +259,11 @@ struct AttributesController {
    * Set all attributes to true or false, i.e. enable/disable all.
    */
   void set_all(const bool value);
+
+  /**
+   * Override a single attribute after defaults/filtering have been applied.
+   */
+  void set(const std::string_view& key, bool value);
 
 private:
   std::unordered_map<std::string_view, bool> attributes;

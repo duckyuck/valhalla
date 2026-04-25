@@ -130,6 +130,8 @@ const std::unordered_map<std::string_view, bool> AttributesController::kDefaultA
     {kEdgeShortcut, false},
     {kEdgeLeavesTile, false},
     {kEdgeCurvature, false},
+    {kEdgePrecipitation, false},
+    {kEdgeWetRoad, false},
 
     // Mostly MVT relevant
     {kEdgeSpeedFwd, false},
@@ -274,6 +276,12 @@ void AttributesController::set_all(const bool value) {
   for (auto& pair : attributes) {
     pair.second = value;
   }
+  enabled_categories = PrecomputeEnabledCategories(attributes);
+}
+
+void AttributesController::set(const std::string_view& key, bool value) {
+  attributes.at(key) = value;
+  enabled_categories = PrecomputeEnabledCategories(attributes);
 }
 
 } // namespace baldr
