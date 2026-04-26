@@ -8,6 +8,7 @@
 #include "sif/osrm_car_duration.h"
 
 #include <algorithm>
+#include <cmath>
 
 #ifdef INLINE_TEST
 #include "test.h"
@@ -69,10 +70,12 @@ constexpr float kTwistyReferenceSpeed = 80.0f; // km/h - normalizing speed for p
 constexpr float kMaxTwistyFactor = 3.0f;      // amplifier for twisty preference (clamped in EdgeCost)
 constexpr float kMinTwistyMultiplier = 0.05f; // floor: never reduce cost below 5% of original
 constexpr float kWeatherWetRoadNormalizer = 0.3f;
-constexpr float kWeatherWetRoadWeight = 1.0f;
 constexpr float kWeatherPrecipitationNormalizer = 2.0f;
-constexpr float kWeatherPrecipitationWeight = 1.0f;
-constexpr float kWeatherMultiplierFloor = 0.0f;
+constexpr float kWeatherEtaWetRoadWeight = 0.35f;
+constexpr float kWeatherEtaPrecipitationWeight = 0.15f;
+constexpr float kWeatherEtaMultiplierFloor = 0.45f;
+constexpr float kWeatherAvoidanceSensitivityFloor = 0.0001f;
+constexpr float kWeatherAvoidanceMultiplierFloor = 0.001f;
 constexpr uint8_t kNonPredictedFlowMask = kDefaultFlowMask & ~kPredictedFlowMask;
 
 constexpr ranged_default_t<uint32_t> kMotorcycleSpeedRange{10, baldr::kMaxAssumedSpeed,
@@ -141,28 +144,43 @@ inline weather_speed_behavior_t weather_speed_behavior(const uint8_t flow_mask,
   return {flow_mask, true};
 }
 
-inline float weather_multiplier(const graph_tile_ptr& tile,
-                                const DirectedEdge* edge,
-                                const TimeInfo& time_info,
-                                const float avoid_precipitation,
-                                const float avoid_wet_roads) {
-  if (avoid_precipitation == 0.0f && avoid_wet_roads == 0.0f) {
-    return 1.0f;
+inline float weather_eta_multiplier(const graph_tile_ptr& tile,
+                                    const DirectedEdge* edge,
+                                    const TimeInfo& time_info) {
+  const float wet_severity = clamp01(tile->wet_road(edge, time_info.second_of_week) /
+                                     kWeatherWetRoadNormalizer);
+  const float precipitation_severity = clamp01(tile->precipitation(edge, time_info.second_of_week) /
+                                               kWeatherPrecipitationNormalizer);
+
+  return std::max(kWeatherEtaMultiplierFloor,
+                  1.0f - wet_severity * kWeatherEtaWetRoadWeight -
+                      precipitation_severity * kWeatherEtaPrecipitationWeight);
+}
+
+inline float weather_avoidance_term(const float value,
+                                    const float normalizer,
+                                    const float preference) {
+  if (value <= 0.0f || preference <= 0.0f) {
+    return 0.0f;
   }
 
-  const float wet_term = avoid_wet_roads *
-                         clamp01(tile->wet_road(edge, time_info.second_of_week) /
-                                 kWeatherWetRoadNormalizer) *
-                         kWeatherWetRoadWeight;
-  const float precipitation_term =
-      avoid_precipitation *
-      clamp01(tile->precipitation(edge, time_info.second_of_week) /
-              kWeatherPrecipitationNormalizer) *
-      kWeatherPrecipitationWeight;
-  const float weather_multiplier =
-      std::max(kWeatherMultiplierFloor, 1.0f - wet_term - precipitation_term);
+  const float effective_normalizer = normalizer * std::pow(kWeatherAvoidanceSensitivityFloor,
+                                                           clamp01(preference));
+  return preference * clamp01(value / effective_normalizer);
+}
 
-  return weather_multiplier;
+inline float weather_avoidance_multiplier(const graph_tile_ptr& tile,
+                                          const DirectedEdge* edge,
+                                          const TimeInfo& time_info,
+                                          const float avoid_precipitation,
+                                          const float avoid_wet_roads) {
+  const float wet_term = weather_avoidance_term(tile->wet_road(edge, time_info.second_of_week),
+                                                kWeatherWetRoadNormalizer, avoid_wet_roads);
+  const float precipitation_term = weather_avoidance_term(
+      tile->precipitation(edge, time_info.second_of_week), kWeatherPrecipitationNormalizer,
+      avoid_precipitation);
+
+  return std::max(kWeatherAvoidanceMultiplierFloor, 1.0f - wet_term - precipitation_term);
 }
 
 inline float weather_safe_speed_penalty(const DirectedEdge* edge,
@@ -515,16 +533,18 @@ Cost MotorcycleCost::EdgeCost(const baldr::DirectedEdge* edge,
   const auto weather_behavior =
       weather_speed_behavior(flow_mask_, explicit_flow_mask_, avoid_precipitation_, avoid_wet_roads_);
   const auto effective_flow_mask = weather_behavior.flow_mask;
-  const auto edge_weather_multiplier =
+  const auto edge_weather_eta_multiplier =
+      weather_behavior.apply_raw_weather ? weather_eta_multiplier(tile, edge, time_info) : 1.0f;
+  const auto edge_weather_avoidance_multiplier =
       weather_behavior.apply_raw_weather
-          ? weather_multiplier(tile, edge, time_info, avoid_precipitation_, avoid_wet_roads_)
+          ? weather_avoidance_multiplier(tile, edge, time_info, avoid_precipitation_, avoid_wet_roads_)
           : 1.0f;
   const auto base_edge_speed = fixed_speed_ == baldr::kDisableFixedSpeed
                                    ? tile->GetSpeed(edge, effective_flow_mask, time_info.second_of_week,
-                                                    false, &flow_sources, time_info.seconds_from_now)
+                                                     false, &flow_sources, time_info.seconds_from_now)
                                    : fixed_speed_;
   const auto weather_adjusted_edge_speed =
-      std::max<uint32_t>(1, static_cast<uint32_t>(base_edge_speed * edge_weather_multiplier));
+      std::max<uint32_t>(1, static_cast<uint32_t>(base_edge_speed * edge_weather_eta_multiplier));
 
   auto final_speed = std::min(weather_adjusted_edge_speed, top_speed_);
 
@@ -578,7 +598,7 @@ Cost MotorcycleCost::EdgeCost(const baldr::DirectedEdge* edge,
 
   factor *= EdgeFactor(edgeid);
 
-  return {sec * factor, sec};
+  return {sec * factor / edge_weather_avoidance_multiplier, sec};
 }
 
 // Returns the time (in seconds) to make the transition from the predecessor

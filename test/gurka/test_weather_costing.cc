@@ -84,6 +84,14 @@ protected:
         });
   }
 
+  static void SetAllWeather(float precipitation, float wet_road) {
+    test::customize_weather_profiles(
+        map_.config,
+        [&](const baldr::GraphId&, baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
+          return test::EdgeWeather{precipitation, wet_road};
+        });
+  }
+
   static void SetUniformLiveTraffic(uint8_t speed) {
     test::customize_live_traffic_data(
         map_.config, [&](baldr::GraphReader&, baldr::TrafficTile&, int, baldr::TrafficSpeed* current) {
@@ -235,12 +243,39 @@ TEST_F(WeatherCosting, MotorcycleSaturatedWetRoadsDropBelowLowTopSpeed) {
   gurka::assert::raw::expect_path(avoid_wet_route, {"AD", "DE", "EF", "FC"});
 }
 
+TEST_F(WeatherCosting, MotorcycleMaxAvoidanceKeepsDurationPlausibleWhenWeatherIsUnavoidable) {
+  SetPredictedTraffic(std::nullopt);
+  SetAllWeather(2.0f, 0.3f);
+
+  auto route = Route("motorcycle", {{"/costing_options/motorcycle/avoid_precipitation", "1.0"},
+                                    {"/costing_options/motorcycle/avoid_wet_roads", "1.0"}});
+  EXPECT_LT(route.directions().routes(0).legs(0).summary().time(), 120.0f);
+}
+
+TEST_F(WeatherCosting, MotorcycleMaxAvoidanceTreatsTinyWetnessAsHighCost) {
+  SetPredictedTraffic(std::nullopt);
+  SetDirectPathWeather(0.0f, 0.001f);
+
+  auto avoid_wet_route =
+      Route("motorcycle", {{"/costing_options/motorcycle/avoid_wet_roads", "1.0"}});
+  gurka::assert::raw::expect_path(avoid_wet_route, {"AD", "DE", "EF", "FC"});
+}
+
+TEST_F(WeatherCosting, MotorcycleMaxAvoidanceTreatsTinyPrecipitationAsHighCost) {
+  SetPredictedTraffic(std::nullopt);
+  SetDirectPathWeather(0.02f, 0.0f);
+
+  auto avoid_precipitation_route =
+      Route("motorcycle", {{"/costing_options/motorcycle/avoid_precipitation", "1.0"}});
+  gurka::assert::raw::expect_path(avoid_precipitation_route, {"AD", "DE", "EF", "FC"});
+}
+
 TEST_F(WeatherCosting, AutoAvoidPrecipitationDoesNotDoubleApplyWeatherPenalty) {
   SetPredictedTraffic(std::nullopt);
   SetDirectPathWeather(1.0f, 0.0f);
 
   auto moderate_avoidance_route =
-      Route("auto", {{"/costing_options/auto/avoid_precipitation", "0.1"}});
+      Route("auto", {{"/costing_options/auto/avoid_precipitation", "0.02"}});
   gurka::assert::raw::expect_path(moderate_avoidance_route, {"AB", "BC"});
 }
 
