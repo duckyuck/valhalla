@@ -216,6 +216,25 @@ TEST_F(WeatherCosting, MotorcycleAvoidWetRoadsHalfSliderChangesRouteChoice) {
   gurka::assert::raw::expect_path(avoid_wet_route, {"AD", "DE", "EF", "FC"});
 }
 
+TEST_F(WeatherCosting, MotorcycleSaturatedPrecipitationDropsBelowLowTopSpeed) {
+  SetPredictedTraffic(std::nullopt);
+  SetDirectPathWeather(2.0f, 0.0f);
+
+  auto avoid_precipitation_route =
+      Route("motorcycle", {{"/costing_options/motorcycle/top_speed", "10"},
+                           {"/costing_options/motorcycle/avoid_precipitation", "1.0"}});
+  gurka::assert::raw::expect_path(avoid_precipitation_route, {"AD", "DE", "EF", "FC"});
+}
+
+TEST_F(WeatherCosting, MotorcycleSaturatedWetRoadsDropBelowLowTopSpeed) {
+  SetPredictedTraffic(std::nullopt);
+  SetDirectPathWeather(0.0f, 0.3f);
+
+  auto avoid_wet_route = Route("motorcycle", {{"/costing_options/motorcycle/top_speed", "10"},
+                                              {"/costing_options/motorcycle/avoid_wet_roads", "1.0"}});
+  gurka::assert::raw::expect_path(avoid_wet_route, {"AD", "DE", "EF", "FC"});
+}
+
 TEST_F(WeatherCosting, AutoAvoidPrecipitationDoesNotDoubleApplyWeatherPenalty) {
   SetPredictedTraffic(std::nullopt);
   SetDirectPathWeather(1.0f, 0.0f);
