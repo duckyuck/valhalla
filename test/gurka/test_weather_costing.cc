@@ -243,13 +243,20 @@ TEST_F(WeatherCosting, MotorcycleSaturatedWetRoadsDropBelowLowTopSpeed) {
   gurka::assert::raw::expect_path(avoid_wet_route, {"AD", "DE", "EF", "FC"});
 }
 
-TEST_F(WeatherCosting, MotorcycleMaxAvoidanceKeepsDurationPlausibleWhenWeatherIsUnavoidable) {
+TEST_F(WeatherCosting, MotorcycleWeatherAvoidanceDoesNotChangeDurationWhenPathIsUnchanged) {
   SetPredictedTraffic(std::nullopt);
-  SetAllWeather(2.0f, 0.3f);
+  SetAllWeather(0.0f, 0.0f);
 
-  auto route = Route("motorcycle", {{"/costing_options/motorcycle/avoid_precipitation", "1.0"},
-                                    {"/costing_options/motorcycle/avoid_wet_roads", "1.0"}});
-  EXPECT_LT(route.directions().routes(0).legs(0).summary().time(), 120.0f);
+  auto baseline_route =
+      Route("motorcycle", {{"/costing_options/motorcycle/avoid_wet_roads", "0.001"}});
+  gurka::assert::raw::expect_path(baseline_route, {"AB", "BC"});
+  const auto baseline_time = baseline_route.directions().routes(0).legs(0).summary().time();
+
+  SetDirectPathWeather(0.0f, 0.3f);
+
+  auto route = Route("motorcycle", {{"/costing_options/motorcycle/avoid_wet_roads", "0.001"}});
+  gurka::assert::raw::expect_path(route, {"AB", "BC"});
+  EXPECT_NEAR(route.directions().routes(0).legs(0).summary().time(), baseline_time, 0.01f);
 }
 
 TEST_F(WeatherCosting, MotorcycleMaxAvoidanceTreatsTinyWetnessAsHighCost) {

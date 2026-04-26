@@ -71,9 +71,6 @@ constexpr float kMaxTwistyFactor = 3.0f;      // amplifier for twisty preference
 constexpr float kMinTwistyMultiplier = 0.05f; // floor: never reduce cost below 5% of original
 constexpr float kWeatherWetRoadNormalizer = 0.3f;
 constexpr float kWeatherPrecipitationNormalizer = 2.0f;
-constexpr float kWeatherEtaWetRoadWeight = 0.35f;
-constexpr float kWeatherEtaPrecipitationWeight = 0.15f;
-constexpr float kWeatherEtaMultiplierFloor = 0.45f;
 constexpr float kWeatherAvoidanceSensitivityFloor = 0.0001f;
 constexpr float kWeatherAvoidanceMultiplierFloor = 0.001f;
 constexpr uint8_t kNonPredictedFlowMask = kDefaultFlowMask & ~kPredictedFlowMask;
@@ -142,19 +139,6 @@ inline weather_speed_behavior_t weather_speed_behavior(const uint8_t flow_mask,
   }
 
   return {flow_mask, true};
-}
-
-inline float weather_eta_multiplier(const graph_tile_ptr& tile,
-                                    const DirectedEdge* edge,
-                                    const TimeInfo& time_info) {
-  const float wet_severity = clamp01(tile->wet_road(edge, time_info.second_of_week) /
-                                     kWeatherWetRoadNormalizer);
-  const float precipitation_severity = clamp01(tile->precipitation(edge, time_info.second_of_week) /
-                                               kWeatherPrecipitationNormalizer);
-
-  return std::max(kWeatherEtaMultiplierFloor,
-                  1.0f - wet_severity * kWeatherEtaWetRoadWeight -
-                      precipitation_severity * kWeatherEtaPrecipitationWeight);
 }
 
 inline float weather_avoidance_term(const float value,
@@ -533,8 +517,6 @@ Cost MotorcycleCost::EdgeCost(const baldr::DirectedEdge* edge,
   const auto weather_behavior =
       weather_speed_behavior(flow_mask_, explicit_flow_mask_, avoid_precipitation_, avoid_wet_roads_);
   const auto effective_flow_mask = weather_behavior.flow_mask;
-  const auto edge_weather_eta_multiplier =
-      weather_behavior.apply_raw_weather ? weather_eta_multiplier(tile, edge, time_info) : 1.0f;
   const auto edge_weather_avoidance_multiplier =
       weather_behavior.apply_raw_weather
           ? weather_avoidance_multiplier(tile, edge, time_info, avoid_precipitation_, avoid_wet_roads_)
@@ -543,10 +525,8 @@ Cost MotorcycleCost::EdgeCost(const baldr::DirectedEdge* edge,
                                    ? tile->GetSpeed(edge, effective_flow_mask, time_info.second_of_week,
                                                      false, &flow_sources, time_info.seconds_from_now)
                                    : fixed_speed_;
-  const auto weather_adjusted_edge_speed =
-      std::max<uint32_t>(1, static_cast<uint32_t>(base_edge_speed * edge_weather_eta_multiplier));
 
-  auto final_speed = std::min(weather_adjusted_edge_speed, top_speed_);
+  auto final_speed = std::min(base_edge_speed, top_speed_);
 
   float sec = (edge->length() * kSpeedFactor[final_speed]);
 
