@@ -442,9 +442,16 @@ void GraphTile::Initialize(const GraphId& graphid) {
         reinterpret_cast<const uint32_t*>(tile_ptr + header_->wet_road_offset());
     precipitation_profiles_ = reinterpret_cast<const uint8_t*>(
         tile_ptr + header_->wet_road_offset() + header_->directededgecount() * sizeof(uint32_t));
+    const auto profile_buckets =
+        header_->weather_profile_valid_count() == 0 ? 7 * 24 : kWeatherProfileBuckets;
+    const auto precipitation_profiles_size =
+        header_->directededgecount() == 0
+            ? 0
+            : *std::max_element(precipitation_profile_offsets_,
+                                precipitation_profile_offsets_ + header_->directededgecount()) +
+                  profile_buckets;
     wet_road_profiles_ =
-        precipitation_profiles_ +
-        CompactWeatherTableSize(precipitation_profile_offsets_, header_->directededgecount());
+        precipitation_profiles_ + precipitation_profiles_size;
   }
 
   // For reference - how to use the end offset to set size of an object (that

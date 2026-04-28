@@ -39,24 +39,53 @@ struct WeatherStats {
 };
 
 struct WeatherProfiles {
-  std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek> precipitation;
-  std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek> wet_road;
+  std::array<uint8_t, GraphTile::kWeatherProfileBuckets> precipitation;
+  std::array<uint8_t, GraphTile::kWeatherProfileBuckets> wet_road;
 };
 
-std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek>
+struct WeatherProfileMetadata {
+  uint32_t start_epoch = 0;
+  uint32_t valid_count = 0;
+};
+
+std::array<uint8_t, GraphTile::kWeatherProfileBuckets>
 decode_compact_weather_profile(const std::string& encoded) {
   auto decoded = valhalla::midgard::decode64(encoded);
-  if (decoded.size() != GraphTile::kWeatherBucketsPerWeek) {
+  if (decoded.size() != GraphTile::kWeatherProfileBuckets) {
     throw std::runtime_error("Unexpected decoded weather profile size: " +
                              std::to_string(decoded.size()) + " bytes (expected " +
-                             std::to_string(GraphTile::kWeatherBucketsPerWeek) + ")");
+                             std::to_string(GraphTile::kWeatherProfileBuckets) + ")");
   }
 
-  std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek> buckets{};
-  for (uint32_t i = 0; i < GraphTile::kWeatherBucketsPerWeek; ++i) {
+  std::array<uint8_t, GraphTile::kWeatherProfileBuckets> buckets{};
+  for (uint32_t i = 0; i < GraphTile::kWeatherProfileBuckets; ++i) {
     buckets[i] = static_cast<uint8_t>(decoded[i]);
   }
   return buckets;
+}
+
+WeatherProfileMetadata ReadWeatherProfileMetadata(const boost::property_tree::ptree& config) {
+  const auto start_epoch =
+      config.get_optional<uint32_t>("mjolnir.weather_profile.start_epoch");
+  const auto valid_count =
+      config.get_optional<uint32_t>("mjolnir.weather_profile.valid_count");
+  const auto capacity = config.get_optional<uint32_t>("mjolnir.weather_profile.capacity");
+
+  if (!start_epoch || !valid_count || !capacity) {
+    throw std::runtime_error(
+        "Weather profile metadata must include start_epoch, valid_count, and capacity");
+  }
+  if (*capacity != GraphTile::kWeatherProfileBuckets) {
+    throw std::runtime_error("Weather profile capacity mismatch: got " +
+                             std::to_string(*capacity) + " expected " +
+                             std::to_string(GraphTile::kWeatherProfileBuckets));
+  }
+  if (*valid_count == 0 || *valid_count > GraphTile::kWeatherProfileBuckets) {
+    throw std::runtime_error("Weather profile valid_count out of bounds: " +
+                             std::to_string(*valid_count));
+  }
+
+  return {*start_epoch, *valid_count};
 }
 
 std::unordered_map<uint32_t, WeatherProfiles>
@@ -142,6 +171,7 @@ ParseWeatherFile(const std::vector<std::string>& filenames, WeatherStats& stat) 
 void UpdateTile(const std::string& tile_dir,
                 const GraphId& tile_id,
                 const std::unordered_map<uint32_t, WeatherProfiles>& weather_by_edge,
+                const WeatherProfileMetadata& metadata,
                 WeatherStats& stat) {
   std::filesystem::path tile_path{tile_dir};
   tile_path.append(GraphTile::FileSuffix(tile_id));
@@ -165,6 +195,7 @@ void UpdateTile(const std::string& tile_dir,
   }
 
   if (updated) {
+    tile_builder.SetWeatherProfileMetadata(metadata.start_epoch, metadata.valid_count);
     tile_builder.UpdateWeatherProfiles();
   }
 }
@@ -172,6 +203,7 @@ void UpdateTile(const std::string& tile_dir,
 void UpdateTiles(const std::string& tile_dir,
                  std::vector<std::pair<GraphId, std::vector<std::string>>>::const_iterator tile_start,
                  std::vector<std::pair<GraphId, std::vector<std::string>>>::const_iterator tile_end,
+                 WeatherProfileMetadata metadata,
                  std::promise<WeatherStats>& result) {
   std::stringstream thread_name;
   thread_name << std::this_thread::get_id();
@@ -183,7 +215,7 @@ void UpdateTiles(const std::string& tile_dir,
     LOG_INFO(thread_name.str() + " parsing weather data for " + std::to_string(tile_start->first));
     auto weather = ParseWeatherFile(tile_start->second, stat);
     LOG_INFO(thread_name.str() + " add weather data to " + std::to_string(tile_start->first));
-    UpdateTile(tile_dir, tile_start->first, weather, stat);
+    UpdateTile(tile_dir, tile_start->first, weather, metadata, stat);
     LOG_INFO(thread_name.str() + " finished " + std::to_string(tile_start->first) + "(" +
              std::to_string(++count / total * 100.0) + ")");
   }
@@ -219,6 +251,7 @@ PrepareWeatherTiles(const std::filesystem::path& weather_tile_dir) {
 void ProcessWeatherTiles(const std::string& tile_dir,
                          const std::filesystem::path& weather_tile_dir,
                          const boost::property_tree::ptree& config) {
+  const auto metadata = ReadWeatherProfileMetadata(config);
   auto weather_tiles = PrepareWeatherTiles(weather_tile_dir);
   if (weather_tiles.empty()) {
     return;
@@ -242,7 +275,7 @@ void ProcessWeatherTiles(const std::string& tile_dir,
     }
 
     futures.emplace_back(promises[i].get_future());
-    workers.emplace_back(UpdateTiles, tile_dir, begin, end, std::ref(promises[i]));
+    workers.emplace_back(UpdateTiles, tile_dir, begin, end, metadata, std::ref(promises[i]));
   }
 
   for (auto& worker : workers) {

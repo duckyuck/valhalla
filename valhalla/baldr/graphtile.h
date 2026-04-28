@@ -40,6 +40,7 @@
 #include <iterator>
 #include <list>
 #include <memory>
+#include <optional>
 
 namespace valhalla {
 namespace baldr {
@@ -143,7 +144,7 @@ class GraphTile {
 #endif // ENABLE_THREAD_SAFE_TILE_REF_COUNT
 public:
   static const constexpr char* kTilePathPattern = "{tilePath}";
-  static constexpr uint32_t kWeatherBucketsPerWeek = 7 * 24;
+  static constexpr uint32_t kWeatherProfileBuckets = 61;
   static constexpr uint32_t kWeatherBucketSizeSeconds = 60 * 60;
   static constexpr float kPrecipitationMax = 5.0f;
   static constexpr float kWetRoadMax = 0.5f;
@@ -156,7 +157,7 @@ public:
     if (count == 0) {
       return 0;
     }
-    return *std::max_element(offsets, offsets + count) + kWeatherBucketsPerWeek;
+    return *std::max_element(offsets, offsets + count) + kWeatherProfileBuckets;
   }
 
   /**
@@ -789,46 +790,79 @@ public:
    */
   std::span<LaneConnectivity> GetLaneConnectivity(const uint32_t idx) const;
 
-  float precipitation(const uint32_t idx, const uint32_t seconds_of_week) const {
+  std::optional<uint32_t> weather_profile_bucket(const uint64_t epoch_seconds) const {
+    const uint32_t valid_count = header_->weather_profile_valid_count();
+    if (valid_count == 0 || valid_count > kWeatherProfileBuckets) {
+      return std::nullopt;
+    }
+
+    const uint64_t start_epoch = header_->weather_profile_start_epoch();
+    if (epoch_seconds < start_epoch) {
+      return std::nullopt;
+    }
+
+    const uint64_t bucket = (epoch_seconds - start_epoch) / kWeatherBucketSizeSeconds;
+    if (bucket >= valid_count) {
+      return std::nullopt;
+    }
+
+    return static_cast<uint32_t>(bucket);
+  }
+
+  float precipitation_bucket(const uint32_t idx, const uint32_t bucket) const {
     if (!precipitation_profile_offsets_ || !precipitation_profiles_) {
       return 0.f;
     }
-    const auto bucket = (seconds_of_week / kWeatherBucketSizeSeconds) % kWeatherBucketsPerWeek;
+    if (bucket >= kWeatherProfileBuckets) {
+      return 0.f;
+    }
     return static_cast<float>(precipitation_profiles_[precipitation_profile_offsets_[idx] + bucket]) /
            255.0f * kPrecipitationMax;
   }
 
+  float precipitation(const uint32_t idx, const uint64_t epoch_seconds) const {
+    const auto bucket = weather_profile_bucket(epoch_seconds);
+    return bucket ? precipitation_bucket(idx, *bucket) : 0.f;
+  }
+
   float precipitation(const uint32_t idx) const {
-    return precipitation(idx, 0);
+    return precipitation_bucket(idx, 0);
   }
 
   float precipitation(const DirectedEdge* edge) const {
     return precipitation(static_cast<uint32_t>(edge - directededges_));
   }
 
-  float precipitation(const DirectedEdge* edge, const uint32_t seconds_of_week) const {
-    return precipitation(static_cast<uint32_t>(edge - directededges_), seconds_of_week);
+  float precipitation(const DirectedEdge* edge, const uint64_t epoch_seconds) const {
+    return precipitation(static_cast<uint32_t>(edge - directededges_), epoch_seconds);
   }
 
-  float wet_road(const uint32_t idx, const uint32_t seconds_of_week) const {
+  float wet_road_bucket(const uint32_t idx, const uint32_t bucket) const {
     if (!wet_road_profile_offsets_ || !wet_road_profiles_) {
       return 0.f;
     }
-    const auto bucket = (seconds_of_week / kWeatherBucketSizeSeconds) % kWeatherBucketsPerWeek;
+    if (bucket >= kWeatherProfileBuckets) {
+      return 0.f;
+    }
     return static_cast<float>(wet_road_profiles_[wet_road_profile_offsets_[idx] + bucket]) / 255.0f *
            kWetRoadMax;
   }
 
+  float wet_road(const uint32_t idx, const uint64_t epoch_seconds) const {
+    const auto bucket = weather_profile_bucket(epoch_seconds);
+    return bucket ? wet_road_bucket(idx, *bucket) : 0.f;
+  }
+
   float wet_road(const uint32_t idx) const {
-    return wet_road(idx, 0);
+    return wet_road_bucket(idx, 0);
   }
 
   float wet_road(const DirectedEdge* edge) const {
     return wet_road(static_cast<uint32_t>(edge - directededges_));
   }
 
-  float wet_road(const DirectedEdge* edge, const uint32_t seconds_of_week) const {
-    return wet_road(static_cast<uint32_t>(edge - directededges_), seconds_of_week);
+  float wet_road(const DirectedEdge* edge, const uint64_t epoch_seconds) const {
+    return wet_road(static_cast<uint32_t>(edge - directededges_), epoch_seconds);
   }
 
   /**

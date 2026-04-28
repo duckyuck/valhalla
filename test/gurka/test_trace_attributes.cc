@@ -628,6 +628,9 @@ TEST(Standalone, WeatherSignalsRewritePreservesPredictedSpeeds) {
 
   // wet_road values must stay within the 0.5 cap to avoid quantization
   // saturation; precipitation tolerance accounts for the 5/255 uint8 step.
+  map.config.put("mjolnir.weather_profile.start_epoch", 1751011200); // 2025-06-27T08:00:00Z
+  map.config.put("mjolnir.weather_profile.valid_count", baldr::GraphTile::kWeatherProfileBuckets);
+  map.config.put("mjolnir.weather_profile.capacity", baldr::GraphTile::kWeatherProfileBuckets);
   test::customize_weather_profiles(
       map.config, [&](const baldr::GraphId& edge_id, baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
         if (edge_id.value == first_edge_id) {
@@ -692,6 +695,10 @@ TEST(Standalone, WeatherSignalsFollowRouteTime) {
   const auto first_edge_id = initial_edges[0]["id"].GetUint64();
   const auto second_edge_id = initial_edges[1]["id"].GetUint64();
 
+  map.config.put("mjolnir.weather_profile.start_epoch", 1750579200); // 2025-06-22T08:00:00Z
+  map.config.put("mjolnir.weather_profile.valid_count", 2);
+  map.config.put("mjolnir.weather_profile.capacity", baldr::GraphTile::kWeatherProfileBuckets);
+
   test::customize_weather_profile_buckets(
       map.config, [&](const baldr::GraphId& edge_id,
                       baldr::DirectedEdge&) -> std::optional<test::EdgeWeatherProfile> {
@@ -699,24 +706,21 @@ TEST(Standalone, WeatherSignalsFollowRouteTime) {
         profile.precipitation.fill(0.f);
         profile.wet_road.fill(0.f);
 
-        auto fill_hour = [&](uint32_t start_bucket, float precipitation, float wet_road) {
-          for (uint32_t bucket = start_bucket; bucket < start_bucket + 12; ++bucket) {
-            profile.precipitation[bucket] = precipitation;
-            profile.wet_road[bucket] = wet_road;
-          }
-        };
-
         // Wet-road values stay within the 0.5 cap so dequantization does not
         // saturate; precipitation values are well under the 5.0 cap.
         if (edge_id.value == first_edge_id) {
-          fill_hour(96, 1.5f, 0.25f);
-          fill_hour(108, 3.25f, 0.4f);
+          profile.precipitation[0] = 1.5f;
+          profile.wet_road[0] = 0.25f;
+          profile.precipitation[1] = 3.25f;
+          profile.wet_road[1] = 0.4f;
           return profile;
         }
 
         if (edge_id.value == second_edge_id) {
-          fill_hour(96, 2.0f, 0.3f);
-          fill_hour(108, 4.0f, 0.45f);
+          profile.precipitation[0] = 2.0f;
+          profile.wet_road[0] = 0.3f;
+          profile.precipitation[1] = 4.0f;
+          profile.wet_road[1] = 0.45f;
           return profile;
         }
 

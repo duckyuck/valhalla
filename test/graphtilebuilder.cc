@@ -30,7 +30,7 @@ using namespace valhalla::mjolnir;
 
 namespace {
 
-constexpr uint32_t kWeatherBucketsPerWeek = 7 * 24;
+constexpr uint32_t kWeatherProfileBuckets = GraphTile::kWeatherProfileBuckets;
 constexpr float kBackendPrecipitationMax = 5.0f;
 constexpr float kBackendWetRoadMax = 0.5f;
 
@@ -75,12 +75,12 @@ public:
     return predictedspeeds_.speed(edge_idx, seconds_of_week);
   }
 
-  float get_precipitation(uint32_t edge_idx, uint32_t seconds_of_week) const {
-    return precipitation(edge_idx, seconds_of_week);
+  float get_precipitation(uint32_t edge_idx, uint64_t epoch_seconds) const {
+    return precipitation(edge_idx, epoch_seconds);
   }
 
-  float get_wet_road(uint32_t edge_idx, uint32_t seconds_of_week) const {
-    return wet_road(edge_idx, seconds_of_week);
+  float get_wet_road(uint32_t edge_idx, uint64_t epoch_seconds) const {
+    return wet_road(edge_idx, epoch_seconds);
   }
 };
 
@@ -96,7 +96,7 @@ void add_weather_test_edges(test_graph_tile_builder& tilebuilder, uint32_t edge_
 }
 
 std::string encode_weather_profile(
-    const std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek>& profile) {
+    const std::array<uint8_t, GraphTile::kWeatherProfileBuckets>& profile) {
   return encode64(std::string(reinterpret_cast<const char*>(profile.data()), profile.size()));
 }
 
@@ -108,8 +108,8 @@ void write_weather_csv(const std::string& weather_dir,
   csv_path.append(GraphTile::FileSuffix(tile_id, ".csv"));
   std::filesystem::create_directories(csv_path.parent_path());
 
-  std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek> precipitation_profile{};
-  std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek> wet_road_profile{};
+  std::array<uint8_t, GraphTile::kWeatherProfileBuckets> precipitation_profile{};
+  std::array<uint8_t, GraphTile::kWeatherProfileBuckets> wet_road_profile{};
   precipitation_profile[0] = precipitation;
   wet_road_profile[1] = wet_road;
 
@@ -512,6 +512,7 @@ TEST(GraphTileBuilder, TestWeatherProfilesCoexistWithPredictedSpeeds) {
   wet_road_b[108] = 0.5f;
 
   test_graph_tile_builder weather_tilebuilder(test_dir, GraphId(0, 2, 0), true);
+  weather_tilebuilder.SetWeatherProfileMetadata(0, GraphTile::kWeatherProfileBuckets);
   weather_tilebuilder.AddWeatherProfile(0, precipitation_a, wet_road_a);
   weather_tilebuilder.AddWeatherProfile(1, precipitation_b, wet_road_b);
   weather_tilebuilder.UpdateWeatherProfiles();
@@ -570,6 +571,7 @@ TEST(GraphTileBuilder, TestWeatherProfilesUseCompactDeduplicatedHourlyPayload) {
   wet_road_b[9 * 12] = 0.5f;
 
   test_graph_tile_builder weather_tilebuilder(test_dir, GraphId(0, 2, 0), true);
+  weather_tilebuilder.SetWeatherProfileMetadata(0, GraphTile::kWeatherProfileBuckets);
   weather_tilebuilder.AddWeatherProfile(0, precipitation_a, wet_road_a);
   weather_tilebuilder.AddWeatherProfile(1, precipitation_b, wet_road_b);
   weather_tilebuilder.AddWeatherProfile(2, precipitation_a, wet_road_a);
@@ -589,7 +591,7 @@ TEST(GraphTileBuilder, TestWeatherProfilesUseCompactDeduplicatedHourlyPayload) {
   const auto compact_growth = test_tile.header()->end_offset() - base_size;
   const auto old_raw_growth = 3 * kBucketsPerWeek * 2 * sizeof(uint16_t);
   const auto compact_upper_bound =
-      (3 * 2 * sizeof(uint32_t)) + (3 * 2 * kWeatherBucketsPerWeek * sizeof(uint8_t));
+      (3 * 2 * sizeof(uint32_t)) + (3 * 2 * kWeatherProfileBuckets * sizeof(uint8_t));
   EXPECT_LE(compact_growth, compact_upper_bound);
   EXPECT_LT(compact_growth, old_raw_growth / 10);
 }
@@ -608,11 +610,12 @@ TEST(GraphTileBuilder, TestCompactWeatherPayloadStaysWithinSizeBudget) {
   const uint32_t base_size = test_graph_tile(test_dir, GraphId(0, 2, 0)).header()->end_offset();
 
   test_graph_tile_builder weather_tilebuilder(test_dir, GraphId(0, 2, 0), true);
+  weather_tilebuilder.SetWeatherProfileMetadata(0, GraphTile::kWeatherProfileBuckets);
   for (uint32_t i = 0; i < kEdgeCount; ++i) {
-    std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek> precipitation{};
-    std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek> wet_road{};
-    precipitation[i % GraphTile::kWeatherBucketsPerWeek] = static_cast<uint8_t>(50 + i);
-    wet_road[(i + 7) % GraphTile::kWeatherBucketsPerWeek] = static_cast<uint8_t>(100 + i);
+    std::array<uint8_t, GraphTile::kWeatherProfileBuckets> precipitation{};
+    std::array<uint8_t, GraphTile::kWeatherProfileBuckets> wet_road{};
+    precipitation[i % GraphTile::kWeatherProfileBuckets] = static_cast<uint8_t>(50 + i);
+    wet_road[(i + 7) % GraphTile::kWeatherProfileBuckets] = static_cast<uint8_t>(100 + i);
     weather_tilebuilder.AddWeatherProfile(i, precipitation, wet_road);
   }
   weather_tilebuilder.UpdateWeatherProfiles();
@@ -625,7 +628,7 @@ TEST(GraphTileBuilder, TestCompactWeatherPayloadStaysWithinSizeBudget) {
   // offset 0) plus one distinct profile per edge in both signals.
   const size_t compact_upper_bound =
       (kEdgeCount * 2 * sizeof(uint32_t)) +
-      ((kEdgeCount + 1) * 2 * GraphTile::kWeatherBucketsPerWeek * sizeof(uint8_t));
+      ((kEdgeCount + 1) * 2 * GraphTile::kWeatherProfileBuckets * sizeof(uint8_t));
 
   EXPECT_LE(compact_growth, compact_upper_bound)
       << "compact weather payload exceeded the theoretical upper bound";
@@ -661,6 +664,7 @@ TEST(GraphTileBuilder, TestWeatherProfilesDecodeBackendQuantizedBytes) {
   wet_road[9 * 12] = wet_road_q9;
 
   test_graph_tile_builder weather_tilebuilder(test_dir, GraphId(0, 2, 0), true);
+  weather_tilebuilder.SetWeatherProfileMetadata(0, GraphTile::kWeatherProfileBuckets);
   weather_tilebuilder.AddWeatherProfile(0, precipitation, wet_road);
   weather_tilebuilder.UpdateWeatherProfiles();
 
@@ -685,12 +689,13 @@ TEST(GraphTileBuilder, TestCompactAddWeatherProfileOverload) {
 
   // Hand-build the same hourly profile shape the backend ships: one byte per
   // hour, already quantized against the backend's caps (5.0 mm/h, 0.5 mm).
-  std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek> precipitation{};
-  std::array<uint8_t, GraphTile::kWeatherBucketsPerWeek> wet_road{};
+  std::array<uint8_t, GraphTile::kWeatherProfileBuckets> precipitation{};
+  std::array<uint8_t, GraphTile::kWeatherProfileBuckets> wet_road{};
   precipitation[8] = 128;
   wet_road[9] = 191;
 
   test_graph_tile_builder weather_tilebuilder(test_dir, GraphId(0, 2, 0), true);
+  weather_tilebuilder.SetWeatherProfileMetadata(0, GraphTile::kWeatherProfileBuckets);
   weather_tilebuilder.AddWeatherProfile(0, precipitation, wet_road);
   weather_tilebuilder.UpdateWeatherProfiles();
 
@@ -705,6 +710,39 @@ TEST(GraphTileBuilder, TestCompactAddWeatherProfileOverload) {
   EXPECT_NEAR(test_tile.get_precipitation(0, 7 * 3600), 0.0f, 0.001f);
   EXPECT_NEAR(test_tile.get_precipitation(0, 10 * 3600), 0.0f, 0.001f);
   EXPECT_NEAR(test_tile.get_wet_road(0, 167 * 3600), 0.0f, 0.001f);
+}
+
+TEST(GraphTileBuilder, TestWeatherProfilesUseUtcSourceAxisMetadata) {
+  std::string test_dir = "test/data/builder_weather_profiles_utc_source_axis";
+  std::filesystem::remove_all(test_dir);
+  test_graph_tile_builder base_tilebuilder(test_dir, GraphId(0, 2, 0), false);
+  add_weather_test_edges(base_tilebuilder, 1);
+  base_tilebuilder.StoreTileData();
+
+  constexpr uint32_t forecast_start_epoch = 1750579200; // 2025-06-22T08:00:00Z
+
+  std::array<uint8_t, GraphTile::kWeatherProfileBuckets> precipitation{};
+  std::array<uint8_t, GraphTile::kWeatherProfileBuckets> wet_road{};
+  precipitation[0] = backend_quantize_weather(1.5f, kBackendPrecipitationMax);
+  precipitation[1] = backend_quantize_weather(3.25f, kBackendPrecipitationMax);
+  wet_road[0] = backend_quantize_weather(0.25f, kBackendWetRoadMax);
+  wet_road[1] = backend_quantize_weather(0.4f, kBackendWetRoadMax);
+
+  test_graph_tile_builder weather_tilebuilder(test_dir, GraphId(0, 2, 0), true);
+  weather_tilebuilder.SetWeatherProfileMetadata(forecast_start_epoch, 2);
+  weather_tilebuilder.AddWeatherProfile(0, precipitation, wet_road);
+  weather_tilebuilder.UpdateWeatherProfiles();
+
+  test_graph_tile test_tile(test_dir, GraphId(0, 2, 0));
+
+  EXPECT_EQ(test_tile.header()->weather_profile_start_epoch(), forecast_start_epoch);
+  EXPECT_EQ(test_tile.header()->weather_profile_valid_count(), 2);
+  EXPECT_NEAR(test_tile.get_precipitation(0, forecast_start_epoch), 1.5f, 0.02f);
+  EXPECT_NEAR(test_tile.get_wet_road(0, forecast_start_epoch), 0.25f, 0.01f);
+  EXPECT_NEAR(test_tile.get_precipitation(0, forecast_start_epoch + 3600), 3.25f, 0.02f);
+  EXPECT_NEAR(test_tile.get_wet_road(0, forecast_start_epoch + 3600), 0.4f, 0.01f);
+  EXPECT_NEAR(test_tile.get_precipitation(0, forecast_start_epoch - 3600), 0.0f, 0.001f);
+  EXPECT_NEAR(test_tile.get_wet_road(0, forecast_start_epoch + 7200), 0.0f, 0.001f);
 }
 
 TEST(GraphTileBuilder, TestWeatherProfilesRemainBeforePredictedSpeedTail) {
@@ -735,6 +773,7 @@ TEST(GraphTileBuilder, TestWeatherProfilesRemainBeforePredictedSpeedTail) {
   wet_road[9 * 12] = 0.375f;
 
   test_graph_tile_builder weather_tilebuilder(test_dir, GraphId(0, 2, 0), true);
+  weather_tilebuilder.SetWeatherProfileMetadata(0, GraphTile::kWeatherProfileBuckets);
   weather_tilebuilder.AddWeatherProfile(0, precipitation, wet_road);
   weather_tilebuilder.AddWeatherProfile(1, precipitation, wet_road);
   weather_tilebuilder.UpdateWeatherProfiles();
@@ -774,6 +813,9 @@ TEST(GraphTileBuilder, TestProcessWeatherTilesKeepsWorkerPromisesAlive) {
 
   boost::property_tree::ptree config;
   config.put("mjolnir.concurrency", 4);
+  config.put("mjolnir.weather_profile.start_epoch", 0);
+  config.put("mjolnir.weather_profile.valid_count", GraphTile::kWeatherProfileBuckets);
+  config.put("mjolnir.weather_profile.capacity", GraphTile::kWeatherProfileBuckets);
 
   EXPECT_NO_THROW(ProcessWeatherTiles(test_dir, weather_dir, config));
 

@@ -176,9 +176,9 @@ inline weather_speed_behavior_t weather_speed_behavior(const uint8_t flow_mask,
 inline float weather_eta_multiplier(const graph_tile_ptr& tile,
                                     const DirectedEdge* edge,
                                     const TimeInfo& time_info) {
-  const float wet_severity = clamp01(tile->wet_road(edge, time_info.second_of_week) /
+  const float wet_severity = clamp01(tile->wet_road(edge, time_info.local_time) /
                                      kWeatherWetRoadNormalizer);
-  const float precipitation_severity = clamp01(tile->precipitation(edge, time_info.second_of_week) /
+  const float precipitation_severity = clamp01(tile->precipitation(edge, time_info.local_time) /
                                                kWeatherPrecipitationNormalizer);
 
   return std::max(kWeatherEtaMultiplierFloor,
@@ -203,10 +203,10 @@ inline float weather_avoidance_multiplier(const graph_tile_ptr& tile,
                                           const TimeInfo& time_info,
                                           const float avoid_precipitation,
                                           const float avoid_wet_roads) {
-  const float wet_term = weather_avoidance_term(tile->wet_road(edge, time_info.second_of_week),
+  const float wet_term = weather_avoidance_term(tile->wet_road(edge, time_info.local_time),
                                                 kWeatherWetRoadNormalizer, avoid_wet_roads);
   const float precipitation_term = weather_avoidance_term(
-      tile->precipitation(edge, time_info.second_of_week), kWeatherPrecipitationNormalizer,
+      tile->precipitation(edge, time_info.local_time), kWeatherPrecipitationNormalizer,
       avoid_precipitation);
 
   return std::max(kWeatherAvoidanceMultiplierFloor, 1.0f - wet_term - precipitation_term);

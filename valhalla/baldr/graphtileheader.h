@@ -18,7 +18,7 @@ namespace baldr {
 // something to the tile simply subtract one from this number and add it
 // just before the empty_slots_ array below. NOTE that it can ONLY be an
 // offset in bytes and NOT a bitfield or union or anything of that sort
-constexpr size_t kEmptySlots = 11;
+constexpr size_t kEmptySlots = 7;
 
 // Maximum size of the version string (stored as a fixed size
 // character array so the GraphTileHeader size remains fixed).
@@ -569,19 +569,35 @@ public:
   }
 
   uint32_t precipitation_offset() const {
-    return empty_slots_[0];
+    return precipitation_offset_;
   }
 
   void set_precipitation_offset(const uint32_t offset) {
-    empty_slots_[0] = offset;
+    precipitation_offset_ = offset;
   }
 
   uint32_t wet_road_offset() const {
-    return empty_slots_[1];
+    return wet_road_offset_;
   }
 
   void set_wet_road_offset(const uint32_t offset) {
-    empty_slots_[1] = offset;
+    wet_road_offset_ = offset;
+  }
+
+  uint32_t weather_profile_start_epoch() const {
+    return weather_profile_start_epoch_;
+  }
+
+  void set_weather_profile_start_epoch(const uint32_t start_epoch) {
+    weather_profile_start_epoch_ = start_epoch;
+  }
+
+  uint32_t weather_profile_valid_count() const {
+    return weather_profile_valid_count_;
+  }
+
+  void set_weather_profile_valid_count(const uint32_t valid_count) {
+    weather_profile_valid_count_ = valid_count;
   }
 
   /**
@@ -717,6 +733,12 @@ protected:
 
   // GraphTile data size in bytes
   uint32_t tile_size_ = 0;
+
+  // Offsets and metadata for the compact hourly weather profiles.
+  uint32_t precipitation_offset_ = 0;
+  uint32_t wet_road_offset_ = 0;
+  uint32_t weather_profile_start_epoch_ = 0;
+  uint32_t weather_profile_valid_count_ = 0;
 
   // Marks the end of this version of the tile with the rest of the slots
   // being available for growth. If you want to use one of the empty slots,

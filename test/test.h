@@ -3,6 +3,7 @@
 
 #include "baldr/directededge.h"
 #include "baldr/graphid.h"
+#include "baldr/graphtile.h"
 #include "baldr/graphreader.h"
 #include "baldr/predictedspeeds.h"
 #include "baldr/traffictile.h"
@@ -129,8 +130,8 @@ struct EdgeWeather {
 };
 
 struct EdgeWeatherProfile {
-  std::array<float, valhalla::baldr::kBucketsPerWeek> precipitation;
-  std::array<float, valhalla::baldr::kBucketsPerWeek> wet_road;
+  std::array<float, valhalla::baldr::GraphTile::kWeatherProfileBuckets> precipitation;
+  std::array<float, valhalla::baldr::GraphTile::kWeatherProfileBuckets> wet_road;
 };
 
 using WeatherCustomize =

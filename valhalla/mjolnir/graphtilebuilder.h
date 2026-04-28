@@ -502,16 +502,23 @@ public:
                          const std::array<float, baldr::kBucketsPerWeek>& precipitation,
                          const std::array<float, baldr::kBucketsPerWeek>& wet_road);
 
+  void AddWeatherProfile(
+      const uint32_t idx,
+      const std::array<float, baldr::GraphTile::kWeatherProfileBuckets>& precipitation,
+      const std::array<float, baldr::GraphTile::kWeatherProfileBuckets>& wet_road);
+
   void AddWeatherProfile(const uint32_t idx,
                          const std::array<uint16_t, baldr::kBucketsPerWeek>& precipitation,
                          const std::array<uint16_t, baldr::kBucketsPerWeek>& wet_road);
 
   void AddWeatherProfile(
       const uint32_t idx,
-      const std::array<uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>& precipitation,
-      const std::array<uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>& wet_road);
+      const std::array<uint8_t, baldr::GraphTile::kWeatherProfileBuckets>& precipitation,
+      const std::array<uint8_t, baldr::GraphTile::kWeatherProfileBuckets>& wet_road);
 
   void AddWeatherProfile(const uint32_t idx, float precipitation, float wet_road);
+
+  void SetWeatherProfileMetadata(uint32_t start_epoch, uint32_t valid_count);
 
   /**
    * Updates a tile with predictive speed data. Also updates directed edges with
@@ -607,16 +614,16 @@ protected:
     using is_transparent = void;
     const std::vector<uint8_t>& profiles_;
 
-    std::span<const uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>
+    std::span<const uint8_t, baldr::GraphTile::kWeatherProfileBuckets>
     to_profile(uint32_t offset) const {
       return std::span<
           const uint8_t,
-          baldr::GraphTile::kWeatherBucketsPerWeek>{profiles_.data() + offset,
-                                                    baldr::GraphTile::kWeatherBucketsPerWeek};
+          baldr::GraphTile::kWeatherProfileBuckets>{profiles_.data() + offset,
+                                                    baldr::GraphTile::kWeatherProfileBuckets};
     }
 
-    static std::span<const uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>
-    to_profile(const std::array<uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>& arr) {
+    static std::span<const uint8_t, baldr::GraphTile::kWeatherProfileBuckets>
+    to_profile(const std::array<uint8_t, baldr::GraphTile::kWeatherProfileBuckets>& arr) {
       return arr;
     }
 
@@ -634,16 +641,16 @@ protected:
     using is_transparent = void;
     const std::vector<uint8_t>& profiles_;
 
-    std::span<const uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>
+    std::span<const uint8_t, baldr::GraphTile::kWeatherProfileBuckets>
     to_profile(uint32_t offset) const {
       return std::span<
           const uint8_t,
-          baldr::GraphTile::kWeatherBucketsPerWeek>{profiles_.data() + offset,
-                                                    baldr::GraphTile::kWeatherBucketsPerWeek};
+          baldr::GraphTile::kWeatherProfileBuckets>{profiles_.data() + offset,
+                                                    baldr::GraphTile::kWeatherProfileBuckets};
     }
 
-    static std::span<const uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>
-    to_profile(const std::array<uint8_t, baldr::GraphTile::kWeatherBucketsPerWeek>& arr) {
+    static std::span<const uint8_t, baldr::GraphTile::kWeatherProfileBuckets>
+    to_profile(const std::array<uint8_t, baldr::GraphTile::kWeatherProfileBuckets>& arr) {
       return arr;
     }
 
@@ -760,6 +767,8 @@ protected:
   std::vector<uint32_t> wet_road_profile_offset_builder_;
   std::vector<uint8_t> precipitation_profile_builder_;
   std::vector<uint8_t> wet_road_profile_builder_;
+  uint32_t weather_profile_start_epoch_ = 0;
+  uint32_t weather_profile_valid_count_ = 0;
   std::unordered_set<uint32_t, WeatherProfileIndexHasher, WeatherProfileIndexEqual>
       precipitation_profile_index_{0, WeatherProfileIndexHasher(precipitation_profile_builder_),
                                    WeatherProfileIndexEqual(precipitation_profile_builder_)};

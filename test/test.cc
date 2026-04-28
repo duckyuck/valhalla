@@ -26,6 +26,13 @@
 #include <sys/stat.h>
 
 namespace {
+std::pair<uint32_t, uint32_t>
+weather_profile_metadata(const boost::property_tree::ptree& config) {
+  return {config.get<uint32_t>("mjolnir.weather_profile.start_epoch", 0),
+          config.get<uint32_t>("mjolnir.weather_profile.valid_count",
+                               valhalla::baldr::GraphTile::kWeatherProfileBuckets)};
+}
+
 bool json_deep_equality(const rapidjson::Value& j1, const rapidjson::Value& j2) {
   if (j1.GetType() != j2.GetType())
     return false;
@@ -692,6 +699,7 @@ void customize_weather_profiles(const boost::property_tree::ptree& config,
                                 const WeatherCustomize& cb) {
   valhalla::baldr::GraphReader reader(config.get_child("mjolnir"));
   auto tile_dir = config.get<std::string>("mjolnir.tile_dir");
+  const auto [start_epoch, valid_count] = weather_profile_metadata(config);
   for (const auto& tile_id : reader.GetTileSet()) {
     valhalla::mjolnir::GraphTileBuilder tile(tile_dir, tile_id, false);
     valhalla::baldr::GraphId edgeid = tile_id;
@@ -705,6 +713,7 @@ void customize_weather_profiles(const boost::property_tree::ptree& config,
       updated = true;
     }
     if (updated) {
+      tile.SetWeatherProfileMetadata(start_epoch, valid_count);
       tile.UpdateWeatherProfiles();
     }
   }
@@ -714,6 +723,7 @@ void customize_weather_profile_buckets(const boost::property_tree::ptree& config
                                        const WeatherProfileCustomize& cb) {
   valhalla::baldr::GraphReader reader(config.get_child("mjolnir"));
   auto tile_dir = config.get<std::string>("mjolnir.tile_dir");
+  const auto [start_epoch, valid_count] = weather_profile_metadata(config);
   for (const auto& tile_id : reader.GetTileSet()) {
     valhalla::mjolnir::GraphTileBuilder tile(tile_dir, tile_id, false);
     valhalla::baldr::GraphId edgeid = tile_id;
@@ -727,6 +737,7 @@ void customize_weather_profile_buckets(const boost::property_tree::ptree& config
       updated = true;
     }
     if (updated) {
+      tile.SetWeatherProfileMetadata(start_epoch, valid_count);
       tile.UpdateWeatherProfiles();
     }
   }

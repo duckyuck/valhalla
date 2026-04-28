@@ -1428,11 +1428,11 @@ TripLeg_Edge* AddTripEdge(const AttributesController& controller,
   }
 
   if (controller(kEdgePrecipitation)) {
-    trip_edge->set_precipitation(graphtile->precipitation(idx, time_info.second_of_week));
+    trip_edge->set_precipitation(graphtile->precipitation(idx, time_info.local_time));
   }
 
   if (controller(kEdgeWetRoad)) {
-    trip_edge->set_wet_road(graphtile->wet_road(idx, time_info.second_of_week));
+    trip_edge->set_wet_road(graphtile->wet_road(idx, time_info.local_time));
   }
 
   if (directededge->destonly() && controller(kEdgeDestinationOnly)) {
