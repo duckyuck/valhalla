@@ -4,8 +4,8 @@
 
 #include <gtest/gtest.h>
 
-#include <sstream>
 #include <optional>
+#include <sstream>
 #include <unordered_set>
 
 using namespace valhalla;
@@ -72,57 +72,63 @@ protected:
   }
 
   static void SetDirectPathWeather(float precipitation, float wet_road) {
-    const std::unordered_set<uint64_t> direct_edge_ids(direct_edge_ids_.begin(), direct_edge_ids_.end());
-    test::customize_weather_profiles(
-        map_.config,
-        [&](const baldr::GraphId& edge_id,
-            baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
-          if (direct_edge_ids.count(edge_id.value) == 0) {
-            return std::nullopt;
-          }
-          return test::EdgeWeather{precipitation, wet_road};
-        });
+    const std::unordered_set<uint64_t> direct_edge_ids(direct_edge_ids_.begin(),
+                                                       direct_edge_ids_.end());
+    test::customize_weather_profiles(map_.config,
+                                     [&](const baldr::GraphId& edge_id,
+                                         baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
+                                       if (direct_edge_ids.count(edge_id.value) == 0) {
+                                         return std::nullopt;
+                                       }
+                                       return test::EdgeWeather{precipitation, wet_road};
+                                     });
   }
 
   static void SetAllWeather(float precipitation, float wet_road) {
-    test::customize_weather_profiles(
-        map_.config,
-        [&](const baldr::GraphId&, baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
-          return test::EdgeWeather{precipitation, wet_road};
-        });
+    test::customize_weather_profiles(map_.config,
+                                     [&](const baldr::GraphId&,
+                                         baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
+                                       return test::EdgeWeather{precipitation, wet_road};
+                                     });
+  }
+
+  static void SetWeatherProfileStart(uint32_t start_epoch) {
+    map_.config.put("mjolnir.weather_profile.start_epoch", start_epoch);
+    map_.config.put("mjolnir.weather_profile.valid_count", baldr::GraphTile::kWeatherProfileBuckets);
+    map_.config.put("mjolnir.weather_profile.capacity", baldr::GraphTile::kWeatherProfileBuckets);
   }
 
   static void SetUniformLiveTraffic(uint8_t speed) {
-    test::customize_live_traffic_data(
-        map_.config, [&](baldr::GraphReader&, baldr::TrafficTile&, int, baldr::TrafficSpeed* current) {
-          current->breakpoint1 = 255;
-          current->overall_encoded_speed = speed >> 1;
-          current->encoded_speed1 = speed >> 1;
-        });
+    test::customize_live_traffic_data(map_.config, [&](baldr::GraphReader&, baldr::TrafficTile&, int,
+                                                       baldr::TrafficSpeed* current) {
+      current->breakpoint1 = 255;
+      current->overall_encoded_speed = speed >> 1;
+      current->encoded_speed1 = speed >> 1;
+    });
   }
 
   static void SetSplitLiveTraffic(uint8_t direct_path_speed, uint8_t detour_speed) {
-    test::customize_live_traffic_data(
-        map_.config, [&](baldr::GraphReader&, baldr::TrafficTile&, int, baldr::TrafficSpeed* current) {
-          current->breakpoint1 = 255;
-          current->overall_encoded_speed = detour_speed >> 1;
-          current->encoded_speed1 = detour_speed >> 1;
-        });
+    test::customize_live_traffic_data(map_.config, [&](baldr::GraphReader&, baldr::TrafficTile&, int,
+                                                       baldr::TrafficSpeed* current) {
+      current->breakpoint1 = 255;
+      current->overall_encoded_speed = detour_speed >> 1;
+      current->encoded_speed1 = detour_speed >> 1;
+    });
 
-    const std::unordered_set<uint64_t> direct_edge_ids(direct_edge_ids_.begin(), direct_edge_ids_.end());
-    test::customize_live_traffic_data(
-        map_.config,
-        [&](baldr::GraphReader&, baldr::TrafficTile& tile, int index, baldr::TrafficSpeed* current) {
-          baldr::GraphId edge_id(tile.header->tile_id);
-          edge_id.set_id(index);
-          if (direct_edge_ids.count(edge_id.value) == 0) {
-            return;
-          }
+    const std::unordered_set<uint64_t> direct_edge_ids(direct_edge_ids_.begin(),
+                                                       direct_edge_ids_.end());
+    test::customize_live_traffic_data(map_.config, [&](baldr::GraphReader&, baldr::TrafficTile& tile,
+                                                       int index, baldr::TrafficSpeed* current) {
+      baldr::GraphId edge_id(tile.header->tile_id);
+      edge_id.set_id(index);
+      if (direct_edge_ids.count(edge_id.value) == 0) {
+        return;
+      }
 
-          current->breakpoint1 = 255;
-          current->overall_encoded_speed = direct_path_speed >> 1;
-          current->encoded_speed1 = direct_path_speed >> 1;
-        });
+      current->breakpoint1 = 255;
+      current->overall_encoded_speed = direct_path_speed >> 1;
+      current->encoded_speed1 = direct_path_speed >> 1;
+    });
   }
 
   static void SetPredictedTraffic(std::optional<float> direct_path_speed) {
@@ -138,9 +144,9 @@ protected:
     });
   }
 
-  static valhalla::Api Route(
-      const std::string& costing,
-      const std::unordered_map<std::string, std::string>& request_options = {}) {
+  static valhalla::Api
+  Route(const std::string& costing,
+        const std::unordered_map<std::string, std::string>& request_options = {}) {
     return gurka::do_action(Options::route, map_, {"A", "C"}, costing, request_options);
   }
 
@@ -149,13 +155,14 @@ protected:
   }
 
   static std::string ExplicitSpeedTypesRequest(const std::string& costing,
-                                              const std::string& speed_types_json,
-                                              const std::string& extra_costing_options_json = "",
-                                              const std::string& extra_root_json = "") {
+                                               const std::string& speed_types_json,
+                                               const std::string& extra_costing_options_json = "",
+                                               const std::string& extra_root_json = "") {
     std::stringstream request;
-    request << R"({"locations":[{"lon":0.0,"lat":0.0,"type":"break"},{"lon":0.008983120447446022,"lat":0.0,"type":"break"}],"costing":")"
-            << costing << R"(","costing_options":{")" << costing
-            << R"(":{"speed_types":)" << speed_types_json;
+    request
+        << R"({"locations":[{"lon":0.0,"lat":0.0,"type":"break"},{"lon":0.008983120447446022,"lat":0.0,"type":"break"}],"costing":")"
+        << costing << R"(","costing_options":{")" << costing << R"(":{"speed_types":)"
+        << speed_types_json;
     if (!extra_costing_options_json.empty()) {
       request << "," << extra_costing_options_json;
     }
@@ -190,7 +197,8 @@ TEST_F(WeatherCosting, AutoAvoidPrecipitationUsesImplicitDefaultWhenSpeedTypesOm
   SetPredictedTraffic(std::nullopt);
   SetDirectPathWeather(5.0f, 0.0f);
 
-  auto route = RawRoute(R"({"locations":[{"lon":0.0,"lat":0.0,"type":"break"},{"lon":0.008983120447446022,"lat":0.0,"type":"break"}],"costing":"auto","costing_options":{"auto":{"avoid_precipitation":1.0}},"verbose":true,"shape_match":"map_snap"})");
+  auto route = RawRoute(
+      R"({"locations":[{"lon":0.0,"lat":0.0,"type":"break"},{"lon":0.008983120447446022,"lat":0.0,"type":"break"}],"costing":"auto","costing_options":{"auto":{"avoid_precipitation":1.0}},"verbose":true,"shape_match":"map_snap"})");
   gurka::assert::raw::expect_path(route, {"AD", "DE", "EF", "FC"});
 }
 
@@ -238,8 +246,9 @@ TEST_F(WeatherCosting, MotorcycleSaturatedWetRoadsDropBelowLowTopSpeed) {
   SetPredictedTraffic(std::nullopt);
   SetDirectPathWeather(0.0f, 0.3f);
 
-  auto avoid_wet_route = Route("motorcycle", {{"/costing_options/motorcycle/top_speed", "10"},
-                                              {"/costing_options/motorcycle/avoid_wet_roads", "1.0"}});
+  auto avoid_wet_route =
+      Route("motorcycle", {{"/costing_options/motorcycle/top_speed", "10"},
+                           {"/costing_options/motorcycle/avoid_wet_roads", "1.0"}});
   gurka::assert::raw::expect_path(avoid_wet_route, {"AD", "DE", "EF", "FC"});
 }
 
@@ -286,7 +295,7 @@ TEST_F(WeatherCosting, AutoAvoidPrecipitationDoesNotDoubleApplyWeatherPenalty) {
   gurka::assert::raw::expect_path(moderate_avoidance_route, {"AB", "BC"});
 }
 
-TEST_F(WeatherCosting, AutoAvoidPrecipitationIgnoresPredictedSpeedPenaltyLeak) {
+TEST_F(WeatherCosting, AutoAvoidPrecipitationKeepsTrafficSpeedSelectionSeparate) {
   SetUniformLiveTraffic(80);
   SetPredictedTraffic(130.0f);
   SetDirectPathWeather(0.0f, 0.0f);
@@ -300,25 +309,27 @@ TEST_F(WeatherCosting, AutoAvoidPrecipitationIgnoresPredictedSpeedPenaltyLeak) {
   gurka::assert::raw::expect_path(route, {"AB", "BC"});
 }
 
-TEST_F(WeatherCosting, AutoAvoidPrecipitationPreservesPredictedOnlySpeedTypes) {
+TEST_F(WeatherCosting, AutoAvoidPrecipitationAppliesWithPredictedOnlySpeedTypes) {
   SetPredictedTraffic(130.0f);
+  SetWeatherProfileStart(1750579200); // 2025-06-22T08:00:00Z
   SetDirectPathWeather(5.0f, 0.0f);
 
-  auto route = RawRoute(ExplicitSpeedTypesRequest(
-      "auto", R"(["predicted"])", R"("avoid_precipitation":1.0)",
-      R"("date_time":{"type":1,"value":"2025-06-22T08:00"})"));
-  gurka::assert::raw::expect_path(route, {"AB", "BC"});
+  auto route =
+      RawRoute(ExplicitSpeedTypesRequest("auto", R"(["predicted"])", R"("avoid_precipitation":1.0)",
+                                         R"("date_time":{"type":1,"value":"2025-06-22T08:00"})"));
+  gurka::assert::raw::expect_path(route, {"AD", "DE", "EF", "FC"});
 }
 
-TEST_F(WeatherCosting, AutoAvoidPrecipitationPreservesExplicitAllSpeedTypes) {
+TEST_F(WeatherCosting, AutoAvoidPrecipitationAppliesWithExplicitAllSpeedTypes) {
   SetPredictedTraffic(130.0f);
+  SetWeatherProfileStart(1750579200); // 2025-06-22T08:00:00Z
   SetDirectPathWeather(5.0f, 0.0f);
 
-  auto route = RawRoute(ExplicitSpeedTypesRequest(
-      "auto", R"(["freeflow","constrained","predicted","current"])",
-      R"("avoid_precipitation":1.0)",
-      R"("date_time":{"type":1,"value":"2025-06-22T08:00"})"));
-  gurka::assert::raw::expect_path(route, {"AB", "BC"});
+  auto route = RawRoute(
+      ExplicitSpeedTypesRequest("auto", R"(["freeflow","constrained","predicted","current"])",
+                                R"("avoid_precipitation":1.0)",
+                                R"("date_time":{"type":1,"value":"2025-06-22T08:00"})"));
+  gurka::assert::raw::expect_path(route, {"AD", "DE", "EF", "FC"});
 }
 
 TEST_F(WeatherCosting, AutoAvoidPrecipitationPreservesEmptySpeedTypes) {
@@ -326,8 +337,8 @@ TEST_F(WeatherCosting, AutoAvoidPrecipitationPreservesEmptySpeedTypes) {
   SetPredictedTraffic(std::nullopt);
   SetDirectPathWeather(0.0f, 0.0f);
 
-  auto route = RawRoute(ExplicitSpeedTypesRequest(
-      "auto", R"([])", R"("avoid_precipitation":1.0)", R"("date_time":{"type":0})"));
+  auto route = RawRoute(ExplicitSpeedTypesRequest("auto", R"([])", R"("avoid_precipitation":1.0)",
+                                                  R"("date_time":{"type":0})"));
   gurka::assert::raw::expect_path(route, {"AB", "BC"});
 }
 
@@ -335,19 +346,19 @@ TEST_F(WeatherCosting, ZeroWeatherKnobsPreserveBaselineWithPredictedSpeedsPresen
   SetPredictedTraffic(std::nullopt);
   SetDirectPathWeather(5.0f, 1.0f);
 
-  const std::unordered_map<std::string, std::string> auto_options = {
-      {"/date_time/type", "1"},
-      {"/date_time/value", "2025-06-22T08:00"},
-      {"/costing_options/auto/avoid_precipitation", "0.0"},
-      {"/costing_options/auto/avoid_wet_roads", "0.0"}};
+  const std::unordered_map<std::string, std::string> auto_options =
+      {{"/date_time/type", "1"},
+       {"/date_time/value", "2025-06-22T08:00"},
+       {"/costing_options/auto/avoid_precipitation", "0.0"},
+       {"/costing_options/auto/avoid_wet_roads", "0.0"}};
   auto auto_route = Route("auto", auto_options);
   gurka::assert::raw::expect_path(auto_route, {"AB", "BC"});
 
-  const std::unordered_map<std::string, std::string> motorcycle_options = {
-      {"/date_time/type", "1"},
-      {"/date_time/value", "2025-06-22T08:00"},
-      {"/costing_options/motorcycle/avoid_precipitation", "0.0"},
-      {"/costing_options/motorcycle/avoid_wet_roads", "0.0"}};
+  const std::unordered_map<std::string, std::string> motorcycle_options =
+      {{"/date_time/type", "1"},
+       {"/date_time/value", "2025-06-22T08:00"},
+       {"/costing_options/motorcycle/avoid_precipitation", "0.0"},
+       {"/costing_options/motorcycle/avoid_wet_roads", "0.0"}};
   auto motorcycle_route = Route("motorcycle", motorcycle_options);
   gurka::assert::raw::expect_path(motorcycle_route, {"AB", "BC"});
 }

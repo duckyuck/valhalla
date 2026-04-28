@@ -73,7 +73,6 @@ constexpr float kWeatherWetRoadNormalizer = 0.3f;
 constexpr float kWeatherPrecipitationNormalizer = 2.0f;
 constexpr float kWeatherAvoidanceSensitivityFloor = 0.0001f;
 constexpr float kWeatherAvoidanceMultiplierFloor = 0.001f;
-constexpr uint8_t kNonPredictedFlowMask = kDefaultFlowMask & ~kPredictedFlowMask;
 
 constexpr ranged_default_t<uint32_t> kMotorcycleSpeedRange{10, baldr::kMaxAssumedSpeed,
                                                            baldr::kMaxSpeedKph};
@@ -114,42 +113,18 @@ inline float clamp01(const float value) {
   return std::min(std::max(value, 0.0f), 1.0f);
 }
 
-struct weather_speed_behavior_t {
-  uint8_t flow_mask;
-  bool apply_raw_weather;
-};
-
-inline weather_speed_behavior_t weather_speed_behavior(const uint8_t flow_mask,
-                                                       const bool explicit_flow_mask,
-                                                       const float avoid_precipitation,
-                                                       const float avoid_wet_roads) {
-  if (avoid_precipitation == 0.0f && avoid_wet_roads == 0.0f) {
-    return {flow_mask, false};
-  }
-
-  // Preserve explicit traffic-source requests that include predicted flow.
-  // Raw weather would double count there, so opt out instead of rewriting the mask.
-  if (explicit_flow_mask && (flow_mask & kPredictedFlowMask)) {
-    return {flow_mask, false};
-  }
-
-  // Default speed_types include predicted; remove only that legacy path so raw weather applies once.
-  if (!explicit_flow_mask && flow_mask == kDefaultFlowMask) {
-    return {static_cast<uint8_t>(flow_mask & ~kPredictedFlowMask), true};
-  }
-
-  return {flow_mask, true};
+inline bool should_apply_weather(const float avoid_precipitation, const float avoid_wet_roads) {
+  return avoid_precipitation != 0.0f || avoid_wet_roads != 0.0f;
 }
 
-inline float weather_avoidance_term(const float value,
-                                    const float normalizer,
-                                    const float preference) {
+inline float
+weather_avoidance_term(const float value, const float normalizer, const float preference) {
   if (value <= 0.0f || preference <= 0.0f) {
     return 0.0f;
   }
 
-  const float effective_normalizer = normalizer * std::pow(kWeatherAvoidanceSensitivityFloor,
-                                                           clamp01(preference));
+  const float effective_normalizer =
+      normalizer * std::pow(kWeatherAvoidanceSensitivityFloor, clamp01(preference));
   return preference * clamp01(value / effective_normalizer);
 }
 
@@ -160,9 +135,9 @@ inline float weather_avoidance_multiplier(const graph_tile_ptr& tile,
                                           const float avoid_wet_roads) {
   const float wet_term = weather_avoidance_term(tile->wet_road(edge, time_info.local_time),
                                                 kWeatherWetRoadNormalizer, avoid_wet_roads);
-  const float precipitation_term = weather_avoidance_term(
-      tile->precipitation(edge, time_info.local_time), kWeatherPrecipitationNormalizer,
-      avoid_precipitation);
+  const float precipitation_term =
+      weather_avoidance_term(tile->precipitation(edge, time_info.local_time),
+                             kWeatherPrecipitationNormalizer, avoid_precipitation);
 
   return std::max(kWeatherAvoidanceMultiplierFloor, 1.0f - wet_term - precipitation_term);
 }
@@ -177,8 +152,8 @@ inline float weather_safe_speed_penalty(const DirectedEdge* edge,
                                         const float base_edge_speed) {
   float average_edge_speed = base_edge_speed;
   if (top_speed != baldr::kMaxAssumedSpeed && (flow_sources & baldr::kCurrentFlowMask)) {
-    average_edge_speed =
-        tile->GetSpeed(edge, effective_flow_mask & (~baldr::kCurrentFlowMask), time_info.second_of_week);
+    average_edge_speed = tile->GetSpeed(edge, effective_flow_mask & (~baldr::kCurrentFlowMask),
+                                        time_info.second_of_week);
   }
 
   return (average_edge_speed > top_speed) ? (average_edge_speed - top_speed) * speed_penalty_factor
@@ -383,14 +358,13 @@ public:
   // Hidden in source file so we don't need it to be protected
   // We expose it within the source file for testing purposes
 public:
-  VehicleType type_;     // Vehicle type: car (default), motorcycle, etc
-  float toll_factor_;    // Factor applied when road has a toll
-  float surface_factor_; // How much the surface factors are applied when using trails
-  float highway_factor_; // Factor applied when road is a motorway or trunk
-  float twisty_factor_;  // Factor for twisty road preference
+  VehicleType type_;          // Vehicle type: car (default), motorcycle, etc
+  float toll_factor_;         // Factor applied when road has a toll
+  float surface_factor_;      // How much the surface factors are applied when using trails
+  float highway_factor_;      // Factor applied when road is a motorway or trunk
+  float twisty_factor_;       // Factor for twisty road preference
   float avoid_precipitation_; // User preference to avoid precipitation at query time
   float avoid_wet_roads_;     // User preference to avoid wet roads at query time
-  bool explicit_flow_mask_;   // Whether this request explicitly supplied speed_types
 };
 
 // Constructor
@@ -451,7 +425,6 @@ MotorcycleCost::MotorcycleCost(const Costing& costing)
 
   avoid_precipitation_ = costing_options.avoid_precipitation();
   avoid_wet_roads_ = costing_options.avoid_wet_roads();
-  explicit_flow_mask_ = costing_options.has_flow_mask_case();
 }
 
 // Destructor
@@ -514,16 +487,14 @@ Cost MotorcycleCost::EdgeCost(const baldr::DirectedEdge* edge,
                               const graph_tile_ptr& tile,
                               const baldr::TimeInfo& time_info,
                               uint8_t& flow_sources) const {
-  const auto weather_behavior =
-      weather_speed_behavior(flow_mask_, explicit_flow_mask_, avoid_precipitation_, avoid_wet_roads_);
-  const auto effective_flow_mask = weather_behavior.flow_mask;
+  const auto apply_weather = should_apply_weather(avoid_precipitation_, avoid_wet_roads_);
   const auto edge_weather_avoidance_multiplier =
-      weather_behavior.apply_raw_weather
-          ? weather_avoidance_multiplier(tile, edge, time_info, avoid_precipitation_, avoid_wet_roads_)
-          : 1.0f;
+      apply_weather ? weather_avoidance_multiplier(tile, edge, time_info, avoid_precipitation_,
+                                                   avoid_wet_roads_)
+                    : 1.0f;
   const auto base_edge_speed = fixed_speed_ == baldr::kDisableFixedSpeed
-                                   ? tile->GetSpeed(edge, effective_flow_mask, time_info.second_of_week,
-                                                     false, &flow_sources, time_info.seconds_from_now)
+                                   ? tile->GetSpeed(edge, flow_mask_, time_info.second_of_week, false,
+                                                    &flow_sources, time_info.seconds_from_now)
                                    : fixed_speed_;
 
   auto final_speed = std::min(base_edge_speed, top_speed_);
@@ -543,8 +514,8 @@ Cost MotorcycleCost::EdgeCost(const baldr::DirectedEdge* edge,
   float factor = kDensityFactor[edge->density()] +
                  highway_factor_ * kHighwayFactor[static_cast<uint32_t>(edge->classification())] +
                  surface_factor_ * kSurfaceFactor[static_cast<uint32_t>(edge->surface())];
-  factor += weather_safe_speed_penalty(edge, tile, time_info, effective_flow_mask, flow_sources,
-                                       top_speed_, speed_penalty_factor_, base_edge_speed);
+  factor += weather_safe_speed_penalty(edge, tile, time_info, flow_mask_, flow_sources, top_speed_,
+                                       speed_penalty_factor_, base_edge_speed);
   if (edge->toll()) {
     factor += toll_factor_;
   }
