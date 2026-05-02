@@ -57,6 +57,7 @@ RUN cmake -B build -DCMAKE_BUILD_TYPE=${BUILD_TYPE-"Release"} -DCMAKE_C_COMPILER
   make -C build all ${ADDITIONAL_TARGETS} -j${CONCURRENCY:-$(nproc)} && \
   ASAN_OPTIONS=detect_leaks=0:symbolize=1 make -C build \
     run-astar run-alternates run-timedep_paths run-trivial_paths \
+    run-gurka_trace_attributes run-gurka_weather_costing \
     -j${CONCURRENCY:-$(nproc)} && \
   make -C build install
 

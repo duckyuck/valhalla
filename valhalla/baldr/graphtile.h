@@ -790,6 +790,13 @@ public:
    */
   std::span<LaneConnectivity> GetLaneConnectivity(const uint32_t idx) const;
 
+  // start_epoch marks the start of bucket 0's accumulation window, and each
+  // subsequent bucket covers the next hour: bucket b spans
+  //   [start_epoch + b * 3600, start_epoch + (b+1) * 3600).
+  // The backend is responsible for writing start_epoch with this convention
+  // — for MET-NWP frames (which are end-of-hour stamped, accumulating over
+  // (T - 1h, T]), it sets start_epoch one hour before the first frame's
+  // stamp so bucket b lines up with the frame stamped (start_epoch + (b+1)h).
   std::optional<uint32_t> weather_profile_bucket(const uint64_t epoch_seconds) const {
     const uint32_t valid_count = header_->weather_profile_valid_count();
     if (valid_count == 0 || valid_count > kWeatherProfileBuckets) {
