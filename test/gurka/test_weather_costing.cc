@@ -18,6 +18,9 @@ A----B----C
 D----E----F
 )";
 
+constexpr float kMinimumRepresentablePrecipitation =
+    baldr::GraphTile::kPrecipitationMax / 255.0f;
+
 class WeatherCosting : public ::testing::Test {
 protected:
   static void SetUpTestSuite() {
@@ -277,9 +280,9 @@ TEST_F(WeatherCosting, MotorcycleMaxAvoidanceTreatsTinyWetnessAsHighCost) {
   gurka::assert::raw::expect_path(avoid_wet_route, {"AD", "DE", "EF", "FC"});
 }
 
-TEST_F(WeatherCosting, MotorcycleMaxAvoidanceTreatsTinyPrecipitationAsHighCost) {
+TEST_F(WeatherCosting, MotorcycleMaxAvoidanceTreatsMinimumPrecipitationAsHighCost) {
   SetPredictedTraffic(std::nullopt);
-  SetDirectPathWeather(0.02f, 0.0f);
+  SetDirectPathWeather(kMinimumRepresentablePrecipitation, 0.0f);
 
   auto avoid_precipitation_route =
       Route("motorcycle", {{"/costing_options/motorcycle/avoid_precipitation", "1.0"}});
