@@ -5,7 +5,23 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
+
 using namespace valhalla;
+
+namespace {
+
+float dequantized_weather_value(float value, float max_value) {
+  return static_cast<float>(std::lround(std::clamp(value, 0.0f, max_value) / max_value * 255.0f)) /
+         255.0f * max_value;
+}
+
+float expected_precipitation(float value) {
+  return dequantized_weather_value(value, baldr::GraphTile::kPrecipitationMax);
+}
+
+} // namespace
 
 /*************************************************************/
 TEST(Standalone, SacScaleAttributes) {
@@ -517,10 +533,9 @@ TEST(Standalone, WeatherSignalsPbfOut) {
   const auto first_edge_id = initial_leg.node(0).edge().id();
   const auto second_edge_id = initial_leg.node(1).edge().id();
 
-  // Test values must stay within the per-signal caps (precipitation 5.0,
-  // wet_road 0.5) or lookup saturates. The quantized round-trip is lossy to
-  // within one uint8 step (precip ~0.02, wet_road ~0.002), so assertions use
-  // EXPECT_NEAR rather than EXPECT_FLOAT_EQ.
+  // Test values must stay within the per-signal caps or lookup saturates. The
+  // quantized round-trip is lossy to within one uint8 step, so precipitation
+  // assertions compare against the dequantized value for the configured cap.
   test::customize_weather_profiles(
       map.config, [&](const baldr::GraphId& edge_id, baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
         if (edge_id.value == first_edge_id) {
@@ -551,8 +566,8 @@ TEST(Standalone, WeatherSignalsPbfOut) {
       return std::fabs(v - expected) <= tolerance;
     });
   };
-  EXPECT_THAT(precipitation_values, ::testing::Contains(near(1.5f, 0.02f)));
-  EXPECT_THAT(precipitation_values, ::testing::Contains(near(3.25f, 0.02f)));
+  EXPECT_THAT(precipitation_values, ::testing::Contains(near(expected_precipitation(1.5f), 0.001f)));
+  EXPECT_THAT(precipitation_values, ::testing::Contains(near(expected_precipitation(3.25f), 0.001f)));
   EXPECT_THAT(wet_road_values, ::testing::Contains(near(0.25f, 0.01f)));
   EXPECT_THAT(wet_road_values, ::testing::Contains(near(0.4f, 0.01f)));
 
@@ -569,11 +584,11 @@ TEST(Standalone, WeatherSignalsPbfOut) {
   ASSERT_EQ(leg.node_size(), 3);
 
   ASSERT_TRUE(leg.node(0).has_edge());
-  EXPECT_NEAR(leg.node(0).edge().precipitation(), 1.5f, 0.02f);
+  EXPECT_NEAR(leg.node(0).edge().precipitation(), expected_precipitation(1.5f), 0.001f);
   EXPECT_NEAR(leg.node(0).edge().wet_road(), 0.25f, 0.01f);
 
   ASSERT_TRUE(leg.node(1).has_edge());
-  EXPECT_NEAR(leg.node(1).edge().precipitation(), 3.25f, 0.02f);
+  EXPECT_NEAR(leg.node(1).edge().precipitation(), expected_precipitation(3.25f), 0.001f);
   EXPECT_NEAR(leg.node(1).edge().wet_road(), 0.4f, 0.01f);
 }
 
@@ -627,7 +642,7 @@ TEST(Standalone, WeatherSignalsRewritePreservesPredictedSpeeds) {
   });
 
   // wet_road values must stay within the 0.5 cap to avoid quantization
-  // saturation; precipitation tolerance accounts for the 5/255 uint8 step.
+  // saturation; precipitation expectations use the dequantized uint8 value.
   map.config.put("mjolnir.weather_profile.start_epoch", 1751011200); // 2025-06-27T08:00:00Z
   map.config.put("mjolnir.weather_profile.valid_count", baldr::GraphTile::kWeatherProfileBuckets);
   map.config.put("mjolnir.weather_profile.capacity", baldr::GraphTile::kWeatherProfileBuckets);
@@ -656,9 +671,9 @@ TEST(Standalone, WeatherSignalsRewritePreservesPredictedSpeeds) {
   auto edges = result["edges"].GetArray();
   ASSERT_EQ(edges.Size(), 2);
 
-  EXPECT_NEAR(edges[0]["precipitation"].GetFloat(), 1.5f, 0.02f);
+  EXPECT_NEAR(edges[0]["precipitation"].GetFloat(), expected_precipitation(1.5f), 0.001f);
   EXPECT_NEAR(edges[0]["wet_road"].GetFloat(), 0.25f, 0.01f);
-  EXPECT_NEAR(edges[1]["precipitation"].GetFloat(), 3.25f, 0.02f);
+  EXPECT_NEAR(edges[1]["precipitation"].GetFloat(), expected_precipitation(3.25f), 0.001f);
   EXPECT_NEAR(edges[1]["wet_road"].GetFloat(), 0.4f, 0.01f);
 
   EXPECT_TRUE(edges[0]["speeds_non_faded"].HasMember("predicted_flow"));
@@ -707,7 +722,7 @@ TEST(Standalone, WeatherSignalsFollowRouteTime) {
         profile.wet_road.fill(0.f);
 
         // Wet-road values stay within the 0.5 cap so dequantization does not
-        // saturate; precipitation values are well under the 5.0 cap.
+        // saturate; precipitation values are under the configured cap.
         if (edge_id.value == first_edge_id) {
           profile.precipitation[0] = 1.5f;
           profile.wet_road[0] = 0.25f;
@@ -740,9 +755,9 @@ TEST(Standalone, WeatherSignalsFollowRouteTime) {
 
   auto morning_edges = morning_result["edges"].GetArray();
   ASSERT_EQ(morning_edges.Size(), 2);
-  EXPECT_NEAR(morning_edges[0]["precipitation"].GetFloat(), 1.5f, 0.02f);
+  EXPECT_NEAR(morning_edges[0]["precipitation"].GetFloat(), expected_precipitation(1.5f), 0.001f);
   EXPECT_NEAR(morning_edges[0]["wet_road"].GetFloat(), 0.25f, 0.01f);
-  EXPECT_NEAR(morning_edges[1]["precipitation"].GetFloat(), 2.0f, 0.02f);
+  EXPECT_NEAR(morning_edges[1]["precipitation"].GetFloat(), expected_precipitation(2.0f), 0.001f);
   EXPECT_NEAR(morning_edges[1]["wet_road"].GetFloat(), 0.3f, 0.01f);
 
   api = gurka::do_action(valhalla::Options::trace_attributes, map, {"A", "B", "C"}, "auto",
@@ -758,9 +773,9 @@ TEST(Standalone, WeatherSignalsFollowRouteTime) {
 
   auto later_edges = later_result["edges"].GetArray();
   ASSERT_EQ(later_edges.Size(), 2);
-  EXPECT_NEAR(later_edges[0]["precipitation"].GetFloat(), 3.25f, 0.02f);
+  EXPECT_NEAR(later_edges[0]["precipitation"].GetFloat(), expected_precipitation(3.25f), 0.001f);
   EXPECT_NEAR(later_edges[0]["wet_road"].GetFloat(), 0.4f, 0.01f);
-  EXPECT_NEAR(later_edges[1]["precipitation"].GetFloat(), 4.0f, 0.02f);
+  EXPECT_NEAR(later_edges[1]["precipitation"].GetFloat(), expected_precipitation(4.0f), 0.001f);
   EXPECT_NEAR(later_edges[1]["wet_road"].GetFloat(), 0.45f, 0.01f);
 }
 
