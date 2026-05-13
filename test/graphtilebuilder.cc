@@ -31,11 +31,15 @@ using namespace valhalla::mjolnir;
 namespace {
 
 constexpr uint32_t kWeatherProfileBuckets = GraphTile::kWeatherProfileBuckets;
-constexpr float kBackendPrecipitationMax = 5.0f;
+constexpr float kBackendPrecipitationMax = GraphTile::kPrecipitationMax;
 constexpr float kBackendWetRoadMax = 0.5f;
 
 uint8_t backend_quantize_weather(float value, float max_value) {
   return static_cast<uint8_t>(std::lround(std::clamp(value, 0.0f, max_value) / max_value * 255.0f));
+}
+
+float backend_round_trip_weather(float value, float max_value) {
+  return backend_quantize_weather(value, max_value) / 255.0f * max_value;
 }
 
 class test_graph_tile_builder : public GraphTileBuilder {
@@ -522,8 +526,10 @@ TEST(GraphTileBuilder, TestWeatherProfilesCoexistWithPredictedSpeeds) {
   EXPECT_NEAR(test_tile.get_predicted_speed(0, 8 * 3600), 25.0f, 0.5f);
   EXPECT_NEAR(test_tile.get_predicted_speed(1, 9 * 3600), 25.0f, 0.5f);
 
-  EXPECT_NEAR(test_tile.get_precipitation(0, 8 * 3600), 1.5f, 0.01f);
-  EXPECT_NEAR(test_tile.get_precipitation(0, 9 * 3600), 3.25f, 0.01f);
+  EXPECT_NEAR(test_tile.get_precipitation(0, 8 * 3600),
+              backend_round_trip_weather(1.5f, kBackendPrecipitationMax), 0.001f);
+  EXPECT_NEAR(test_tile.get_precipitation(0, 9 * 3600),
+              backend_round_trip_weather(3.25f, kBackendPrecipitationMax), 0.001f);
   EXPECT_NEAR(test_tile.get_wet_road(0, 8 * 3600), 0.25f, 0.01f);
   EXPECT_NEAR(test_tile.get_wet_road(0, 9 * 3600), 0.375f, 0.01f);
 
@@ -579,13 +585,16 @@ TEST(GraphTileBuilder, TestWeatherProfilesUseCompactDeduplicatedHourlyPayload) {
 
   test_graph_tile test_tile(test_dir, GraphId(0, 2, 0));
 
-  EXPECT_NEAR(test_tile.get_precipitation(0, 8 * 3600), 1.5f, 0.01f);
-  EXPECT_NEAR(test_tile.get_precipitation(0, 9 * 3600), 3.25f, 0.01f);
+  EXPECT_NEAR(test_tile.get_precipitation(0, 8 * 3600),
+              backend_round_trip_weather(1.5f, kBackendPrecipitationMax), 0.001f);
+  EXPECT_NEAR(test_tile.get_precipitation(0, 9 * 3600),
+              backend_round_trip_weather(3.25f, kBackendPrecipitationMax), 0.001f);
   EXPECT_NEAR(test_tile.get_wet_road(0, 8 * 3600), 0.25f, 0.01f);
   EXPECT_NEAR(test_tile.get_wet_road(0, 9 * 3600), 0.375f, 0.01f);
   EXPECT_NEAR(test_tile.get_precipitation(1, 8 * 3600), 2.0f, 0.01f);
   EXPECT_NEAR(test_tile.get_precipitation(1, 9 * 3600), 4.0f, 0.01f);
-  EXPECT_NEAR(test_tile.get_precipitation(2, 8 * 3600), 1.5f, 0.01f);
+  EXPECT_NEAR(test_tile.get_precipitation(2, 8 * 3600),
+              backend_round_trip_weather(1.5f, kBackendPrecipitationMax), 0.001f);
   EXPECT_NEAR(test_tile.get_wet_road(2, 9 * 3600), 0.375f, 0.01f);
 
   const auto compact_growth = test_tile.header()->end_offset() - base_size;
@@ -737,9 +746,11 @@ TEST(GraphTileBuilder, TestWeatherProfilesUseUtcSourceAxisMetadata) {
 
   EXPECT_EQ(test_tile.header()->weather_profile_start_epoch(), forecast_start_epoch);
   EXPECT_EQ(test_tile.header()->weather_profile_valid_count(), 2);
-  EXPECT_NEAR(test_tile.get_precipitation(0, forecast_start_epoch), 1.5f, 0.02f);
+  EXPECT_NEAR(test_tile.get_precipitation(0, forecast_start_epoch),
+              backend_round_trip_weather(1.5f, kBackendPrecipitationMax), 0.001f);
   EXPECT_NEAR(test_tile.get_wet_road(0, forecast_start_epoch), 0.25f, 0.01f);
-  EXPECT_NEAR(test_tile.get_precipitation(0, forecast_start_epoch + 3600), 3.25f, 0.02f);
+  EXPECT_NEAR(test_tile.get_precipitation(0, forecast_start_epoch + 3600),
+              backend_round_trip_weather(3.25f, kBackendPrecipitationMax), 0.001f);
   EXPECT_NEAR(test_tile.get_wet_road(0, forecast_start_epoch + 3600), 0.4f, 0.01f);
   EXPECT_NEAR(test_tile.get_precipitation(0, forecast_start_epoch - 3600), 0.0f, 0.001f);
   EXPECT_NEAR(test_tile.get_wet_road(0, forecast_start_epoch + 7200), 0.0f, 0.001f);
@@ -783,7 +794,8 @@ TEST(GraphTileBuilder, TestWeatherProfilesRemainBeforePredictedSpeedTail) {
   EXPECT_GT(test_tile.header()->predictedspeeds_offset(), predicted_offset);
   EXPECT_NEAR(test_tile.get_predicted_speed(0, 8 * 3600), 25.0f, 0.5f);
   EXPECT_NEAR(test_tile.get_predicted_speed(1, 9 * 3600), 35.0f, 0.5f);
-  EXPECT_NEAR(test_tile.get_precipitation(0, 8 * 3600), 1.5f, 0.01f);
+  EXPECT_NEAR(test_tile.get_precipitation(0, 8 * 3600),
+              backend_round_trip_weather(1.5f, kBackendPrecipitationMax), 0.001f);
   EXPECT_NEAR(test_tile.get_wet_road(1, 9 * 3600), 0.375f, 0.01f);
 }
 

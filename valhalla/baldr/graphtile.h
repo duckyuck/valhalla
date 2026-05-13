@@ -146,7 +146,7 @@ public:
   static const constexpr char* kTilePathPattern = "{tilePath}";
   static constexpr uint32_t kWeatherProfileBuckets = 61;
   static constexpr uint32_t kWeatherBucketSizeSeconds = 60 * 60;
-  static constexpr float kPrecipitationMax = 5.0f;
+  static constexpr float kPrecipitationMax = 15.0f;
   static constexpr float kWetRoadMax = 0.5f;
 
   // Byte size of a compact weather profile table covering `count` edges.
