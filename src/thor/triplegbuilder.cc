@@ -1427,12 +1427,21 @@ TripLeg_Edge* AddTripEdge(const AttributesController& controller,
     trip_edge->set_curvature(directededge->curvature());
   }
 
+  // Ferries and rail ferries: the rider/vehicle is on a deck, so road weather
+  // (precipitation / wet road) along the geometry doesn't reflect what the rider
+  // is experiencing. Emit zero so client weather strips don't paint ferry
+  // segments wet on rainy days.
+  const bool is_ferry_edge = directededge->use() == Use::kFerry ||
+                             directededge->use() == Use::kRailFerry;
+
   if (controller(kEdgePrecipitation)) {
-    trip_edge->set_precipitation(graphtile->precipitation(idx, time_info.local_time));
+    trip_edge->set_precipitation(
+        is_ferry_edge ? 0.0f : graphtile->precipitation(idx, time_info.local_time));
   }
 
   if (controller(kEdgeWetRoad)) {
-    trip_edge->set_wet_road(graphtile->wet_road(idx, time_info.local_time));
+    trip_edge->set_wet_road(
+        is_ferry_edge ? 0.0f : graphtile->wet_road(idx, time_info.local_time));
   }
 
   if (directededge->destonly() && controller(kEdgeDestinationOnly)) {

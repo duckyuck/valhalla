@@ -487,7 +487,13 @@ Cost MotorcycleCost::EdgeCost(const baldr::DirectedEdge* edge,
                               const graph_tile_ptr& tile,
                               const baldr::TimeInfo& time_info,
                               uint8_t& flow_sources) const {
-  const auto apply_weather = should_apply_weather(avoid_precipitation_, avoid_wet_roads_);
+  // Ferries and rail ferries: the rider is parked on a deck, so road weather
+  // (precipitation / wet road) doesn't apply. Skip the weather multiplier so
+  // ferries aren't penalised on rainy days.
+  const auto is_ferry_edge =
+      edge->use() == Use::kFerry || edge->use() == Use::kRailFerry;
+  const auto apply_weather =
+      !is_ferry_edge && should_apply_weather(avoid_precipitation_, avoid_wet_roads_);
   const auto edge_weather_avoidance_multiplier =
       apply_weather ? weather_avoidance_multiplier(tile, edge, time_info, avoid_precipitation_,
                                                    avoid_wet_roads_)

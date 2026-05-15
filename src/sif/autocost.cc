@@ -595,7 +595,13 @@ Cost AutoCost::EdgeCost(const baldr::DirectedEdge* edge,
                         const baldr::TimeInfo& time_info,
                         uint8_t& flow_sources) const {
   // either the computed edge speed or optional top_speed
-  const auto apply_weather = should_apply_weather(avoid_precipitation_, avoid_wet_roads_);
+  // Ferries and rail ferries: the vehicle is parked on a deck, so road weather
+  // (precipitation / wet road) doesn't apply. Skip both the ETA-speed and the
+  // routing-cost weather multipliers so ferries aren't penalised on rainy days.
+  const auto is_ferry_edge =
+      edge->use() == Use::kFerry || edge->use() == Use::kRailFerry;
+  const auto apply_weather =
+      !is_ferry_edge && should_apply_weather(avoid_precipitation_, avoid_wet_roads_);
   const auto edge_weather_eta_multiplier =
       apply_weather ? weather_eta_multiplier(tile, edge, time_info) : 1.0f;
   const auto edge_weather_avoidance_multiplier =

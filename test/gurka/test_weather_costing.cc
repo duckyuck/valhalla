@@ -1,4 +1,5 @@
 #include "baldr/graphreader.h"
+#include "baldr/rapidjson_utils.h"
 #include "gurka.h"
 #include "test.h"
 
@@ -364,6 +365,150 @@ TEST_F(WeatherCosting, ZeroWeatherKnobsPreserveBaselineWithPredictedSpeedsPresen
        {"/costing_options/motorcycle/avoid_wet_roads", "0.0"}};
   auto motorcycle_route = Route("motorcycle", motorcycle_options);
   gurka::assert::raw::expect_path(motorcycle_route, {"AB", "BC"});
+}
+
+// Ferries: the rider/vehicle is parked on a deck, so road weather doesn't apply.
+// These tests verify that ferry edges are exempt from the precipitation / wet-road
+// cost and ETA multipliers, and that trace_attributes reports zero weather for them
+// regardless of the underlying tile values.
+class FerryWeatherCosting : public ::testing::Test {
+protected:
+  static void SetUpTestSuite() {
+    // Linear path: road - ferry - road.
+    const std::string kFerryMap = R"(
+A----B====C----D
+    )";
+
+    const gurka::ways ways = {
+        {"AB", {{"highway", "primary"}, {"maxspeed", "80"}}},
+        {"BC",
+         {{"route", "ferry"},
+          {"motor_vehicle", "yes"},
+          {"motorcar", "yes"},
+          {"motorcycle", "yes"},
+          {"duration", "00:01"}}},
+        {"CD", {{"highway", "primary"}, {"maxspeed", "80"}}},
+    };
+
+    const auto layout = gurka::detail::map_to_coordinates(kFerryMap, 100);
+    map_ = gurka::buildtiles(layout, ways, {}, {}, "test/data/gurka_weather_costing_ferry",
+                             {{"mjolnir.concurrency", "1"}});
+
+    ferry_edge_ids_ = CollectFerryEdgeIds();
+  }
+
+  // Find every directed edge tagged as a ferry. Both directions are returned so
+  // SetFerryWeather targets the same edge regardless of traversal direction.
+  static std::vector<uint64_t> CollectFerryEdgeIds() {
+    auto reader = test::make_clean_graphreader(map_.config.get_child("mjolnir"));
+    std::vector<uint64_t> edge_ids;
+    for (const auto& tile_id : reader->GetTileSet()) {
+      auto tile = reader->GetGraphTile(tile_id);
+      for (uint32_t i = 0; i < tile->header()->directededgecount(); ++i) {
+        const auto* edge = tile->directededge(i);
+        if (edge->use() == baldr::Use::kFerry || edge->use() == baldr::Use::kRailFerry) {
+          baldr::GraphId edge_id(tile_id);
+          edge_id.set_id(i);
+          edge_ids.push_back(edge_id.value);
+        }
+      }
+    }
+    return edge_ids;
+  }
+
+  static void SetFerryWeather(float precipitation, float wet_road) {
+    const std::unordered_set<uint64_t> ids(ferry_edge_ids_.begin(), ferry_edge_ids_.end());
+    test::customize_weather_profiles(map_.config,
+                                     [&](const baldr::GraphId& edge_id,
+                                         baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
+                                       if (ids.count(edge_id.value) == 0) {
+                                         return std::nullopt;
+                                       }
+                                       return test::EdgeWeather{precipitation, wet_road};
+                                     });
+  }
+
+  static void SetAllWeather(float precipitation, float wet_road) {
+    test::customize_weather_profiles(map_.config,
+                                     [&](const baldr::GraphId&,
+                                         baldr::DirectedEdge&) -> std::optional<test::EdgeWeather> {
+                                       return test::EdgeWeather{precipitation, wet_road};
+                                     });
+  }
+
+  static valhalla::Api
+  Route(const std::string& costing,
+        const std::unordered_map<std::string, std::string>& request_options = {}) {
+    return gurka::do_action(Options::route, map_, {"A", "D"}, costing, request_options);
+  }
+
+  static gurka::map map_;
+  static std::vector<uint64_t> ferry_edge_ids_;
+};
+
+gurka::map FerryWeatherCosting::map_ = {};
+std::vector<uint64_t> FerryWeatherCosting::ferry_edge_ids_ = {};
+
+// Auto: even with heavy weather on the ferry edge and max avoidance knobs, the
+// router should return the same path and the same duration as the no-weather
+// baseline. If the ferry exemption regresses, the eta multiplier stretches the
+// ferry leg and/or the avoidance multiplier penalises it.
+TEST_F(FerryWeatherCosting, AutoDurationInvariantWhenFerryHasWeather) {
+  SetAllWeather(0.0f, 0.0f);
+  auto baseline = Route("auto");
+  gurka::assert::raw::expect_path(baseline, {"AB", "BC", "CD"});
+  const auto baseline_time = baseline.directions().routes(0).legs(0).summary().time();
+
+  SetFerryWeather(5.0f, 1.0f);
+  auto stormy = Route("auto", {{"/costing_options/auto/avoid_precipitation", "1.0"},
+                               {"/costing_options/auto/avoid_wet_roads", "1.0"}});
+  gurka::assert::raw::expect_path(stormy, {"AB", "BC", "CD"});
+  EXPECT_NEAR(stormy.directions().routes(0).legs(0).summary().time(), baseline_time, 0.5f);
+}
+
+TEST_F(FerryWeatherCosting, MotorcycleDurationInvariantWhenFerryHasWeather) {
+  SetAllWeather(0.0f, 0.0f);
+  auto baseline = Route("motorcycle");
+  gurka::assert::raw::expect_path(baseline, {"AB", "BC", "CD"});
+  const auto baseline_time = baseline.directions().routes(0).legs(0).summary().time();
+
+  SetFerryWeather(5.0f, 1.0f);
+  auto stormy = Route("motorcycle", {{"/costing_options/motorcycle/avoid_precipitation", "1.0"},
+                                     {"/costing_options/motorcycle/avoid_wet_roads", "1.0"}});
+  gurka::assert::raw::expect_path(stormy, {"AB", "BC", "CD"});
+  EXPECT_NEAR(stormy.directions().routes(0).legs(0).summary().time(), baseline_time, 0.5f);
+}
+
+// trace_attributes: with weather set on every edge, the ferry edge should still
+// report zero precipitation / wet_road because triplegbuilder zeroes them at
+// emit time. The flanking road edges keep their non-zero values.
+TEST_F(FerryWeatherCosting, TraceAttributesZeroWeatherOnFerryEdge) {
+  SetAllWeather(2.0f, 0.5f);
+
+  std::string trace_json;
+  [[maybe_unused]] auto api =
+      gurka::do_action(Options::trace_attributes, map_, {"A", "B", "C", "D"}, "auto", {}, {},
+                       &trace_json, "via");
+
+  rapidjson::Document result;
+  result.Parse(trace_json.c_str());
+  ASSERT_FALSE(result.HasParseError()) << "Failed to parse trace_attributes response";
+  ASSERT_TRUE(result.HasMember("edges"));
+
+  const auto edges = result["edges"].GetArray();
+  ASSERT_EQ(edges.Size(), 3u) << "Expected 3 edges: AB, BC (ferry), CD";
+
+  // Flanking road edges should carry the customised weather.
+  EXPECT_GT(edges[0]["precipitation"].GetDouble(), 0.0) << "AB (road) should have weather";
+  EXPECT_GT(edges[0]["wet_road"].GetDouble(), 0.0) << "AB (road) should have weather";
+  EXPECT_GT(edges[2]["precipitation"].GetDouble(), 0.0) << "CD (road) should have weather";
+  EXPECT_GT(edges[2]["wet_road"].GetDouble(), 0.0) << "CD (road) should have weather";
+
+  // Ferry edge: zeroed at emit time regardless of tile data.
+  EXPECT_DOUBLE_EQ(edges[1]["precipitation"].GetDouble(), 0.0)
+      << "BC (ferry) should report zero precipitation";
+  EXPECT_DOUBLE_EQ(edges[1]["wet_road"].GetDouble(), 0.0)
+      << "BC (ferry) should report zero wet_road";
 }
 
 } // namespace
